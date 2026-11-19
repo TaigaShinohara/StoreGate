@@ -76,11 +76,11 @@ python3 scripts/check-docs.py
 
 1. Add the human facing entry to the matching doc in `docs/`.
 2. Add a machine readable entry to `data/rejection-patterns.json` with an id, platform, guideline, severity, a concrete detection signal, and the fix.
-3. If the pattern is automatable, add a check to `agent-os/hooks/app-store-compliance-guard.sh` and a case to `agent-os/hooks/app-store-compliance-guard-test.sh`.
+3. If the pattern is automatable, add a check to `agent-os/hooks/storegate-guard.sh` and a case to `agent-os/hooks/storegate-guard-test.sh`.
 4. Run the test suite and confirm it passes.
 
 ```
-bash agent-os/hooks/app-store-compliance-guard-test.sh
+bash agent-os/hooks/storegate-guard-test.sh
 ```
 
 ## Style

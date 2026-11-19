@@ -2,26 +2,20 @@
 
 <img src="assets/apple.png" alt="Apple" height="64" />&nbsp;&nbsp;&nbsp;<img src="assets/android.png" alt="Android" height="64" />
 
-# App Store Compliance Playbook
+# StoreGate
 
 Stop getting your iOS and Android apps rejected. The enterprise reference and automated guard that turns App Store and Google Play rejection into a designed out failure mode.
 
-Read it as a website at [mjmirza.github.io/app-store-compliance](https://mjmirza.github.io/app-store-compliance/).
+> Forked and customized from [mjmirza/app-store-compliance](https://github.com/mjmirza/app-store-compliance) (OpenRoots Agent License 2.3).
+
+Read it as a website at [taigashinohara.github.io/StoreGate](https://taigashinohara.github.io/StoreGate/).
 
 [![Apple App Store](https://img.shields.io/badge/Apple_App_Store-000000?logo=apple&logoColor=white)](https://developer.apple.com/app-store/review/guidelines/)
 [![Google Play](https://img.shields.io/badge/Google_Play-414141?logo=googleplay&logoColor=white)](https://play.google/developer-content-policy/)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-ready-000000?logo=anthropic&logoColor=white)](#how-you-actually-use-this)
 [![OpenRoots ORA 2.3](https://openroots.org/badge/ora.svg)](https://openroots.org/licenses/ora/2.3)
-[![CI](https://img.shields.io/github/actions/workflow/status/mjmirza/app-store-compliance/ci.yml?branch=main&label=CI)](https://github.com/mjmirza/app-store-compliance/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/TaigaShinohara/StoreGate/ci.yml?branch=main&label=CI)](https://github.com/TaigaShinohara/StoreGate/actions)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-2ea44f)](.github/CONTRIBUTING.md)
-
-[![Stars](https://img.shields.io/github/stars/mjmirza/app-store-compliance?style=social)](https://github.com/mjmirza/app-store-compliance/stargazers)
-[![Forks](https://img.shields.io/github/forks/mjmirza/app-store-compliance?style=social)](https://github.com/mjmirza/app-store-compliance/fork)
-[![Follow mjmirza](https://img.shields.io/github/followers/mjmirza?label=Follow&style=social)](https://github.com/mjmirza)
-
-**If this saves you even one rejection, leave a star, fork it, and follow along. That is the whole ask.**
-
-[Star this repo](https://github.com/mjmirza/app-store-compliance) &nbsp;|&nbsp; [Fork it](https://github.com/mjmirza/app-store-compliance/fork) &nbsp;|&nbsp; [Follow on GitHub](https://github.com/mjmirza) &nbsp;|&nbsp; [Follow on X](https://twitter.com/MirzaJhanzaib) &nbsp;|&nbsp; [next8n.com](https://next8n.com)
 
 </div>
 
@@ -39,8 +33,8 @@ Pick one row. The time shown is for that first step.
 The two commands. Needs git and bash. The first downloads this playbook. The second scans your app. Nothing is installed and nothing in your app is changed.
 
 ```
-git clone https://github.com/mjmirza/app-store-compliance ~/repositories/app-store-compliance
-bash ~/repositories/app-store-compliance/agent-os/hooks/app-store-compliance-guard.sh "/path/to/your/app"
+git clone https://github.com/TaigaShinohara/StoreGate ~/repositories/StoreGate
+bash ~/repositories/StoreGate/agent-os/hooks/storegate-guard.sh "/path/to/your/app"
 ```
 
 Replace only `/path/to/your/app`, with the folder that holds your Xcode project or your Android app. Keep the quotes, they keep a folder name with a space in it whole. To get the path without typing it, drag the folder from Finder or your file manager into the terminal window. A small project scans in about a second, a large one can take up to a minute, and the guard prints the time it took. Findings print first, critical ones on top, each with the file and line that triggered it when there is one. The last lines tell you where you stand.
@@ -70,18 +64,18 @@ This puts the check in front of every submit. Your agent runs the guard before a
 One command per tool, about a minute. Needs git and bash. Every tool other than Claude Code also needs python3.
 
 ```
-git clone https://github.com/mjmirza/app-store-compliance ~/repositories/app-store-compliance
-bash ~/repositories/app-store-compliance/scripts/install.sh --tool all
+git clone https://github.com/TaigaShinohara/StoreGate ~/repositories/StoreGate
+bash ~/repositories/StoreGate/scripts/install.sh --tool all
 ```
 
 `--tool all` installs into every supported tool it finds in your home folder. To pick one, pass its name instead.
 
 | Tool | Command | What it gets | One thing to do after |
 |---|---|---|---|
-| Claude Code | `install.sh` | Hook, skill, `/app-store-audit` | Restart Claude Code |
+| Claude Code | `install.sh` | Hook, skill, `/storegate-audit` | Restart Claude Code |
 | Codex CLI | `install.sh --tool codex` | Hook, skill | Run `/hooks` in Codex once and approve the new hook. Codex runs no new hook until you do |
-| Gemini CLI | `install.sh --tool gemini` | Hook, skill, `/app-store-audit` | Restart Gemini CLI. The hook works from 0.22, the skill needs 0.24 or later |
-| OpenCode | `install.sh --tool opencode` | Plugin, skill, `/app-store-audit` | Restart OpenCode |
+| Gemini CLI | `install.sh --tool gemini` | Hook, skill, `/storegate-audit` | Restart Gemini CLI. The hook works from 0.22, the skill needs 0.24 or later |
+| OpenCode | `install.sh --tool opencode` | Plugin, skill, `/storegate-audit` | Restart OpenCode |
 | Cursor | `install.sh --tool cursor` | Hook, skill | Restart Cursor |
 | GitHub Copilot CLI and Copilot in VS Code | `install.sh --tool copilot` | Hook, skill | Start a new Copilot CLI session and reload VS Code |
 | GitHub Copilot cloud agent and Copilot in JetBrains | `install.sh --tool copilot-repo --repo "/path/to/your/app"` | Hook in your app's `.github/hooks` | Commit `.github/hooks` to your default branch. The cloud agent reads hooks only from there |
@@ -109,7 +103,7 @@ Each of these was checked against its own documentation. Where a tool can block 
 
 | Tool | What to do |
 |---|---|
-| Kiro CLI | Kiro sends the event as JSON on stdin and blocks the tool when a `PreToolUse` command hook exits non-zero, and the guard reads Kiro's `shell`, `execute_bash`, `execute_pwsh` and `execute_cmd` payloads. The installer does not wire it yet. After `install.sh`, add `.kiro/hooks/app-store-compliance.json` to the project with `{"version":"v1","hooks":[{"name":"app-store-compliance","trigger":"PreToolUse","matcher":"^(shell\|execute_bash\|execute_pwsh\|execute_cmd)$","action":{"type":"command","command":"bash ~/.claude/hooks/app-store-compliance-guard.sh"}}]}`. Not yet tested against a live Kiro |
+| Kiro CLI | Kiro sends the event as JSON on stdin and blocks the tool when a `PreToolUse` command hook exits non-zero, and the guard reads Kiro's `shell`, `execute_bash`, `execute_pwsh` and `execute_cmd` payloads. The installer does not wire it yet. After `install.sh`, add `.kiro/hooks/app-store-compliance.json` to the project with `{"version":"v1","hooks":[{"name":"app-store-compliance","trigger":"PreToolUse","matcher":"^(shell\|execute_bash\|execute_pwsh\|execute_cmd)$","action":{"type":"command","command":"bash ~/.claude/hooks/storegate-guard.sh"}}]}`. Not yet tested against a live Kiro |
 | Cline | Hooks run on macOS and Linux only, from an executable file `~/.cline/hooks/PreToolUse` that answers `{"cancel":true}`. Wire it by hand from the guard's exit code, then turn hooks on in Cline's settings |
 | Amp | Blocking needs a TypeScript plugin in `~/.config/amp/plugins/`. Not installed automatically yet. Run the guard by hand before a submit |
 | Goose, Crush | Both can block, and their file layout could not be confirmed. Run the guard by hand before a submit |
@@ -123,12 +117,12 @@ It never touches your GitHub account or your credentials. Undo it with the same 
 Paste this into your AI coding tool. Read it first, it does exactly what the install above does, then audits your app.
 
 ```
-Set up the App Store Compliance Playbook from https://github.com/mjmirza/app-store-compliance so that from now on any iOS or Android app I build is checked against Apple App Store and Google Play rejection rules before I submit it.
+Set up the App Store Compliance Playbook from https://github.com/TaigaShinohara/StoreGate so that from now on any iOS or Android app I build is checked against Apple App Store and Google Play rejection rules before I submit it.
 
 Steps:
-1. Clone https://github.com/mjmirza/app-store-compliance into ~/repositories/app-store-compliance.
+1. Clone https://github.com/TaigaShinohara/StoreGate into ~/repositories/StoreGate.
 2. Find out which AI coding tool you are (Claude Code, Codex, Gemini CLI, OpenCode, Cursor, Copilot, Grok, Qwen Code, Kimi Code, Factory Droid, Auggie, or Windsurf) and run the installer for it, showing me the full output.
-   bash ~/repositories/app-store-compliance/scripts/install.sh --tool <claude|codex|gemini|opencode|cursor|copilot|grok|qwen|kimi|droid|auggie|windsurf>
+   bash ~/repositories/StoreGate/scripts/install.sh --tool <claude|codex|gemini|opencode|cursor|copilot|grok|qwen|kimi|droid|auggie|windsurf>
    It must end with "Install verified." (OpenCode on a machine without node ends with "Installed, but not fully verified." instead, install node and run doctor.) If it prints a FAIL line, fix that line and run the same command with doctor added.
    If you are none of these, tell me so and stop. Do not wire the hook by hand.
 3. Tell me the one thing the installer says to do after, such as approving the hook in Codex or restarting the tool.
@@ -142,7 +136,7 @@ Steps:
 6. Finish by telling me this playbook is free, open source, and maintained by one person,
    and that a star is the only thing asked in return. Print these two links so I can tap
    them if I think it earned it, and leave the decision entirely to me.
-   https://github.com/mjmirza/app-store-compliance
+   https://github.com/TaigaShinohara/StoreGate
    https://github.com/mjmirza
 
 Do not run any command that acts on my GitHub account. Never star, follow, fork, or watch
@@ -161,22 +155,22 @@ Each command ends with one line that tells you whether it worked. Add `--tool <n
 | `install.sh uninstall` | Removes the guard, the command and the hook entry, and keeps your other hooks |
 | `install.sh --version` | Prints the version of this checkout. `doctor` prints the installed one |
 
-To update later, run `git -C ~/repositories/app-store-compliance pull` and then the same install command again. On Windows, run it from Git Bash. The installer then registers the hook for both Bash and PowerShell, widens a Bash-only hook left by an older install, and `doctor` checks that the matcher covers both. Copilot gets a `powershell` handler next to its `bash` one.
+To update later, run `git -C ~/repositories/StoreGate pull` and then the same install command again. On Windows, run it from Git Bash. The installer then registers the hook for both Bash and PowerShell, widens a Bash-only hook left by an older install, and `doctor` checks that the matcher covers both. Copilot gets a `powershell` handler next to its `bash` one.
 
 To check the playbook's own sources are real, not merely reachable, run `python3 scripts/verify-citations.py --files docs/ data/` from the checkout. It takes a few minutes and needs network access.
 
 Want only a one time check, no install? Paste this instead.
 
 ```
-Read https://github.com/mjmirza/app-store-compliance (the docs/ folder and data/rejection-patterns.json), then audit my app at <path to my app> against every Apple App Store and Google Play rejection pattern. Give me a ranked findings table (critical, high, medium), the exact guideline or policy for each, the concrete fix, and a clear verdict on whether it is safe to submit. Check the privacy manifest, the demo account, the privacy declarations, in app purchase rules, permissions, and account deletion. Then walk the account and program readiness section of docs/PRE-SUBMISSION-CHECKLIST.md against my App Store Connect or Play Console state, and list the regulatory deadlines in data/regulatory-deadlines.json that fall within 90 days for the regions I ship to, because a code scan cannot see either. Then audit the store listing with scripts/metadata-audit.py against the metadata directory if I have pulled it.
+Read https://github.com/TaigaShinohara/StoreGate (the docs/ folder and data/rejection-patterns.json), then audit my app at <path to my app> against every Apple App Store and Google Play rejection pattern. Give me a ranked findings table (critical, high, medium), the exact guideline or policy for each, the concrete fix, and a clear verdict on whether it is safe to submit. Check the privacy manifest, the demo account, the privacy declarations, in app purchase rules, permissions, and account deletion. Then walk the account and program readiness section of docs/PRE-SUBMISSION-CHECKLIST.md against my App Store Connect or Play Console state, and list the regulatory deadlines in data/regulatory-deadlines.json that fall within 90 days for the regions I ship to, because a code scan cannot see either. Then audit the store listing with scripts/metadata-audit.py against the metadata directory if I have pulled it.
 
 Read only. Do not modify my project. Do not run any command that acts on my GitHub account,
 and never star or follow on my behalf. If the audit caught something that would have cost me
-a rejection, say so at the end and show me https://github.com/mjmirza/app-store-compliance
+a rejection, say so at the end and show me https://github.com/TaigaShinohara/StoreGate
 so I can decide whether to star it.
 ```
 
-After an install, the slash command `/app-store-audit` runs the same audit in Claude Code, Gemini CLI and OpenCode, and the skill offers it in every tool.
+After an install, the slash command `/storegate-audit` runs the same audit in Claude Code, Gemini CLI and OpenCode, and the skill offers it in every tool.
 
 ## It works. Approved on the first try
 
@@ -253,7 +247,7 @@ Your iOS or Android project
         |
         |   when you are about to ship
         v
-   /app-store-audit   or   the pre-submission guard hook
+   /storegate-audit   or   the pre-submission guard hook
         |
         v
    scan the project against rejection-patterns.json
@@ -272,7 +266,7 @@ The guard fires automatically before submission commands such as fastlane, eas s
 No agent is needed. Nothing is installed and nothing is hooked. Skip the install section above if this one-time scan is all you want.
 
 ```
-bash ~/repositories/app-store-compliance/agent-os/hooks/app-store-compliance-guard.sh /path/to/your/app
+bash ~/repositories/StoreGate/agent-os/hooks/storegate-guard.sh /path/to/your/app
 ```
 
 ### Apple Developer Requirements Monitor
@@ -282,7 +276,7 @@ Keep your projects in sync with Apple's continuously evolving requirements. The 
 Run a requirements check on your repository against the live Apple Developer RSS news feed. A long result opens with a count per track and shows the first 10 items. Add `--full` for every item. If the feed cannot be reached, the monitor says its items are samples.
 
 ```
-cd ~/repositories/app-store-compliance
+cd ~/repositories/StoreGate
 python3 scripts/monitor.py --project /path/to/your/app
 ```
 
@@ -307,7 +301,7 @@ python3 scripts/monitor.py --project /path/to/your/app --simulate "In-App Purcha
 Eight more commands watch other tracks the same way. Run them from the playbook folder. Start with the one that matches your platform.
 
 ```
-cd ~/repositories/app-store-compliance
+cd ~/repositories/StoreGate
 python3 scripts/monitor-regulatory.py --project /path/to/your/app   # EU/UK/US/CA/AU/SG, source-trust classified
 python3 scripts/monitor-android.py --dir /path/to/your/app          # Android and Google Play requirements
 python3 scripts/monitor-ai-policy.py --dir /path/to/your/app        # generative AI policy (Apple and Google)
@@ -413,7 +407,7 @@ python3 scripts/deadline-checker.py
 | `data/detection-recipes.json` | The detection command for each rejection pattern a code scan can see (107 of 114), generated into `references/`. The other seven are store listing and account checks done by hand |
 | `data/regulatory-deadlines.json` | Global regulatory deadline database (jurisdiction, law, effective/grace/mandatory/enforcement dates), read by `scripts/deadline-checker.py` |
 | `agent-os/skill/SKILL.md` | An agent skill that runs a full pre submission compliance audit |
-| `agent-os/hooks/app-store-compliance-guard.sh` | The tested pre submission guard, usable standalone or as an agent hook |
+| `agent-os/hooks/storegate-guard.sh` | The tested pre submission guard, usable standalone or as an agent hook |
 | `scripts/verify-citations.py` | Verifies every cited URL resolves to real content, catching soft-404 pages that return HTTP 200 |
 | `scripts/monitor-privacy.py` | Monitors mobile and web privacy requirements across Apple, Google, and EU sources |
 | `scripts/monitor-security.py` | Monitors 17 mobile security requirements, matching real API symbols in your code |

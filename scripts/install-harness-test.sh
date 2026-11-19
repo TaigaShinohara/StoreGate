@@ -35,7 +35,7 @@ gdir() {  # where each tool's guard lands
   esac
 }
 count() {  # how many hook entries point at the guard
-  if [ "$1" = "kimi" ]; then grep -c "app-store-compliance-guard.sh" "$(cfg kimi)" 2>/dev/null || true; return; fi
+  if [ "$1" = "kimi" ]; then grep -c "storegate-guard.sh" "$(cfg kimi)" 2>/dev/null || true; return; fi
   python3 - "$1" "$(cfg "$1")" <<'PY'
 import json, sys
 tool, path = sys.argv[1], sys.argv[2]
@@ -50,7 +50,7 @@ groups = box.get(key, [])
 n = 0
 for g in groups:
     items = g.get("hooks", []) if tool in ("codex", "gemini", "grok", "qwen", "droid", "auggie") else [g]
-    n += sum("app-store-compliance-guard.sh" in str(h.get("command", h.get("bash", ""))) for h in items)
+    n += sum("storegate-guard.sh" in str(h.get("command", h.get("bash", ""))) for h in items)
 print(n)
 PY
 }
@@ -60,7 +60,7 @@ for t in codex gemini opencode cursor copilot grok qwen kimi droid auggie windsu
   fresh
   OUT="$(run --tool "$t")"; RC=$?
   [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "^Install verified\." && ok "$t fresh install verifies" || { bad "$t fresh install verifies (rc=$RC)"; echo "$OUT" | tail -15; }
-  [ -x "$(gdir "$t")/app-store-compliance-guard.sh" ] && ok "$t guard is installed and executable" || bad "$t guard is installed and executable"
+  [ -x "$(gdir "$t")/storegate-guard.sh" ] && ok "$t guard is installed and executable" || bad "$t guard is installed and executable"
   [ -f "$H/.agents/skills/app-store-compliance/SKILL.md" ] && [ -f "$H/.agents/skills/app-store-compliance/VERSION" ] && ok "$t shared skill and version installed" || bad "$t shared skill and version installed"
   if [ "$t" != "opencode" ]; then
     [ "$(count "$t")" = "1" ] && ok "$t hook registered once" || bad "$t hook registered once (got $(count "$t"))"
@@ -90,7 +90,7 @@ done
 fresh; run --tool copilot >/dev/null; run --tool auggie >/dev/null; run --tool windsurf >/dev/null
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); a=d["hooks"]["preToolUse"][0]; b=d["hooks"]["PreToolUse"][0]; sys.exit(0 if d["version"]==1 and a["timeoutSec"]==120 and a["bash"].endswith("guard.sh'"'"'") and b["timeout"]==120 and b["command"]==a["bash"] else 1)' "$H/.copilot/hooks/app-store-compliance.json" \
   && ok "copilot file carries the Copilot entry and the VS Code entry" || bad "copilot file carries the Copilot entry and the VS Code entry"
-python3 -c 'import json,sys; a=json.load(open(sys.argv[1]))["hooks"]["preToolUse"][0]; p=a.get("powershell",""); sys.exit(0 if p.startswith("$input | & bash ") and "app-store-compliance-guard.sh" in p and p.rstrip().endswith("exit $LASTEXITCODE") else 1)' "$H/.copilot/hooks/app-store-compliance.json" \
+python3 -c 'import json,sys; a=json.load(open(sys.argv[1]))["hooks"]["preToolUse"][0]; p=a.get("powershell",""); sys.exit(0 if p.startswith("$input | & bash ") and "storegate-guard.sh" in p and p.rstrip().endswith("exit $LASTEXITCODE") else 1)' "$H/.copilot/hooks/app-store-compliance.json" \
   && ok "copilot also carries a Windows powershell handler that pipes the payload to the guard and keeps its exit code" || bad "copilot also carries a Windows powershell handler that pipes the payload to the guard and keeps its exit code"
 python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["hooks"]["preToolUse"][0].pop("powershell",None); json.dump(d,open(p,"w"))' "$H/.copilot/hooks/app-store-compliance.json"
 run --tool copilot doctor >/dev/null; RC=$?
@@ -98,13 +98,13 @@ run --tool copilot doctor >/dev/null; RC=$?
 run --tool copilot >/dev/null
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); e=d["hooks"]["preToolUse"]; sys.exit(0 if len(e)==1 and e[0].get("powershell") else 1)' "$H/.copilot/hooks/app-store-compliance.json" \
   && ok "copilot install adds the missing Windows handler without a duplicate" || bad "copilot install adds the missing Windows handler without a duplicate"
-python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["hooks"]["preToolUse"][0]["powershell"]="Write-Output app-store-compliance-guard.sh; exit $LASTEXITCODE"; json.dump(d,open(p,"w"))' "$H/.copilot/hooks/app-store-compliance.json"
+python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["hooks"]["preToolUse"][0]["powershell"]="Write-Output storegate-guard.sh; exit $LASTEXITCODE"; json.dump(d,open(p,"w"))' "$H/.copilot/hooks/app-store-compliance.json"
 run --tool copilot doctor >/dev/null; RC=$?
 [ "$RC" -eq 1 ] && ok "copilot doctor fails when the Windows handler was edited" || bad "copilot doctor fails when the Windows handler was edited (rc=$RC)"
 run --tool copilot >/dev/null
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); g=d["hooks"]["PreToolUse"][0]; sys.exit(0 if g["matcher"]=="launch-process" and g["hooks"][0]["timeout"]==120000 else 1)' "$H/.augment/settings.json" \
   && ok "auggie uses launch-process and a millisecond timeout" || bad "auggie uses launch-process and a millisecond timeout"
-python3 -c 'import json,os,sys; c=json.load(open(sys.argv[1]))["hooks"]["PreToolUse"][0]["hooks"][0]["command"]; sys.exit(0 if c==sys.argv[2] and os.access(c,os.X_OK) and open(c).readline().startswith("#!") else 1)' "$H/.augment/settings.json" "$H/.augment/hooks/app-store-compliance-guard.sh" \
+python3 -c 'import json,os,sys; c=json.load(open(sys.argv[1]))["hooks"]["PreToolUse"][0]["hooks"][0]["command"]; sys.exit(0 if c==sys.argv[2] and os.access(c,os.X_OK) and open(c).readline().startswith("#!") else 1)' "$H/.augment/settings.json" "$H/.augment/hooks/storegate-guard.sh" \
   && ok "auggie registers the executable guard script path, as its docs require" || bad "auggie registers the executable guard script path, as its docs require"
 python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); h=d["hooks"]["PreToolUse"][0]["hooks"][0]; h["command"]="bash "+h["command"]; json.dump(d,open(p,"w"))' "$H/.augment/settings.json"
 run --tool auggie doctor >/dev/null; RC=$?
@@ -118,7 +118,7 @@ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); e=d["hooks"]["pre_r
 fresh; run --tool grok >/dev/null
 python3 -c 'import json,re,sys; m=json.load(open(sys.argv[1]))["hooks"]["PreToolUse"][0]["matcher"]; sys.exit(0 if m=="Bash|run_terminal_command|run_terminal_cmd|bash|monitor" and all(re.fullmatch(m,t) for t in ("run_terminal_command","run_terminal_cmd","bash","monitor")) else 1)' "$(cfg grok)" \
   && ok "grok matcher covers every Grok shell tool" || bad "grok matcher covers every Grok shell tool"
-GLOG="$WORK/grok-payload$RANDOM.json"; GG="$(gdir grok)/app-store-compliance-guard.sh"; cp "$GG" "$WORK/grok-guard.bak"
+GLOG="$WORK/grok-payload$RANDOM.json"; GG="$(gdir grok)/storegate-guard.sh"; cp "$GG" "$WORK/grok-guard.bak"
 printf '#!/usr/bin/env bash\ncat > "%s"\ngrep -q deliver "%s" && exit 2\nexit 0\n' "$GLOG" "$GLOG" > "$GG"
 run --tool grok doctor >/dev/null
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("toolName")=="run_terminal_command" and d.get("hookEventName")=="PreToolUse" and "command" in d.get("toolInput",{}) else 1)' "$GLOG" 2>/dev/null \
@@ -162,7 +162,7 @@ done
 # 2d2 KIMI_CODE_HOME moves Kimi's whole data folder, so the hook goes where Kimi reads it
 fresh; mkdir -p "$H/kimi-custom"; printf 'default_model = "k2"\n' > "$H/kimi-custom/config.toml"
 OUT="$(env -u QWEN_HOME -u CODEX_HOME -u XDG_CONFIG_HOME HOME="$H" KIMI_CODE_HOME="$H/kimi-custom" bash "$INSTALL" --tool kimi 2>&1)"; RC=$?
-[ "$RC" -eq 0 ] && grep -q "app-store-compliance-guard.sh" "$H/kimi-custom/config.toml" && [ ! -e "$H/.kimi-code/config.toml" ] && ok "kimi follows KIMI_CODE_HOME" || bad "kimi follows KIMI_CODE_HOME (rc=$RC)"
+[ "$RC" -eq 0 ] && grep -q "storegate-guard.sh" "$H/kimi-custom/config.toml" && [ ! -e "$H/.kimi-code/config.toml" ] && ok "kimi follows KIMI_CODE_HOME" || bad "kimi follows KIMI_CODE_HOME (rc=$RC)"
 OUT="$(env -u QWEN_HOME -u CODEX_HOME -u XDG_CONFIG_HOME HOME="$H" KIMI_CODE_HOME="$H/kimi-custom" bash "$INSTALL" --tool all 2>&1)"
 echo "$OUT" | grep -q "== kimi ==" && ok "auto discovery finds Kimi under KIMI_CODE_HOME" || bad "auto discovery finds Kimi under KIMI_CODE_HOME"
 # 2d3 an inline hooks array cannot take a [[hooks]] block, so the file is left as it was and the block is shown
@@ -288,7 +288,7 @@ import sys, tomllib
 sys.path.insert(0, "scripts")
 import install_harness as h
 b = chr(92)
-h.shown = lambda p: "~" + b + ".gemini" + b + "hooks" + b + "app-store-compliance-guard.sh"
+h.shown = lambda p: "~" + b + ".gemini" + b + "hooks" + b + "storegate-guard.sh"
 t = tomllib.loads(h.command_text("gemini", "x"))
 sys.exit(0 if (b + ".gemini" + b) in t["prompt"] else 1)
 ' 2>/dev/null && ok "gemini audit command stays valid TOML with a Windows path" || bad "gemini audit command stays valid TOML with a Windows path"
@@ -298,11 +298,11 @@ fresh; APPR="$WORK/apprepo$RANDOM"; mkdir -p "$APPR"
 OUT="$(run --tool copilot-repo)"; RC=$?
 [ "$RC" -eq 2 ] && echo "$OUT" | grep -q "Pass --repo" && ok "copilot-repo without --repo exits 2 and says what to pass" || bad "copilot-repo without --repo exits 2 (rc=$RC)"
 OUT="$(run --tool copilot-repo --repo "$APPR")"; RC=$?
-[ "$RC" -eq 0 ] && echo "$OUT" | grep -q "^Install verified\." && [ -x "$APPR/.github/hooks/app-store-compliance-guard.sh" ] \
-  && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["hooks"]["preToolUse"][0]["bash"]=="bash ./.github/hooks/app-store-compliance-guard.sh" else 1)' "$APPR/.github/hooks/app-store-compliance.json" \
+[ "$RC" -eq 0 ] && echo "$OUT" | grep -q "^Install verified\." && [ -x "$APPR/.github/hooks/storegate-guard.sh" ] \
+  && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["hooks"]["preToolUse"][0]["bash"]=="bash ./.github/hooks/storegate-guard.sh" else 1)' "$APPR/.github/hooks/app-store-compliance.json" \
   && [ ! -e "$H/.agents" ] && ok "copilot-repo writes a relative hook into the repository and nothing in HOME" || { bad "copilot-repo writes a relative hook into the repository (rc=$RC)"; echo "$OUT" | tail -8; }
 run --tool copilot-repo --repo "$APPR" uninstall >/dev/null
-[ ! -e "$APPR/.github/hooks/app-store-compliance.json" ] && [ ! -e "$APPR/.github/hooks/app-store-compliance-guard.sh" ] && ok "copilot-repo uninstall removes both files" || bad "copilot-repo uninstall removes both files"
+[ ! -e "$APPR/.github/hooks/app-store-compliance.json" ] && [ ! -e "$APPR/.github/hooks/storegate-guard.sh" ] && ok "copilot-repo uninstall removes both files" || bad "copilot-repo uninstall removes both files"
 
 # 3 existing settings survive and get a backup (Gemini keeps ide and security, Codex keeps its other hooks)
 fresh; mkdir -p "$H/.gemini" "$H/.codex"
@@ -346,7 +346,7 @@ run --tool gemini doctor >/dev/null; RC=$?
 run --tool gemini >/dev/null; run --tool gemini doctor >/dev/null; RC=$?
 [ "$RC" -eq 0 ] && [ "$(count gemini)" = "1" ] && ok "gemini install repairs the handler once" || bad "gemini install repairs the handler once (rc=$RC entries=$(count gemini))"
 fresh; run --tool kimi >/dev/null
-python3 -c 'import sys; p=sys.argv[1]; t=open(p).read(); i=t.index("command = "); j=t.index("\n",i); open(p,"w").write(t[:i]+"command = \"bash /no/such/app-store-compliance-guard.sh\""+t[j:])' "$(cfg kimi)"
+python3 -c 'import sys; p=sys.argv[1]; t=open(p).read(); i=t.index("command = "); j=t.index("\n",i); open(p,"w").write(t[:i]+"command = \"bash /no/such/storegate-guard.sh\""+t[j:])' "$(cfg kimi)"
 run --tool kimi doctor >/dev/null; RC=$?
 [ "$RC" -eq 1 ] && ok "kimi doctor tests the command actually registered in config.toml" || bad "kimi doctor tests the command actually registered in config.toml (rc=$RC)"
 run --tool kimi >/dev/null; run --tool kimi doctor >/dev/null; RC=$?
@@ -362,22 +362,22 @@ done
 # 6 the installed guard finds the deadline list and the manifest validator in the shared skill
 fresh; run --tool codex >/dev/null
 APP="$WORK/app$RANDOM"; mkdir -p "$APP/App"; printf '<plist><dict></dict></plist>' > "$APP/App/Info.plist"; printf 'import UIKit\n' > "$APP/App/A.swift"
-OUT="$(env HOME="$H" bash "$H/.codex/hooks/app-store-compliance-guard.sh" "$APP" 2>&1)"
+OUT="$(env HOME="$H" bash "$H/.codex/hooks/storegate-guard.sh" "$APP" 2>&1)"
 echo "$OUT" | grep -q "Regulatory Compliance Deadline Status" && ok "the codex guard finds the deadline list in ~/.agents/skills" || bad "the codex guard finds the deadline list in ~/.agents/skills"
 
 # 6b release-audit.py run from the shared skill finds the guard installed under the tool's own folder
 fresh; run --tool codex >/dev/null
 OUT="$(env -u APP_STORE_GUARD_PATH HOME="$H" python3 "$H/.agents/skills/app-store-compliance/scripts/release-audit.py" "$APP" 2>&1)"
-echo "$OUT" | grep -qF "Guard. $H/.codex/hooks/app-store-compliance-guard.sh" && ok "release-audit in the shared skill finds the codex guard" || { bad "release-audit in the shared skill finds the codex guard"; echo "$OUT" | grep -i guard | head -3; }
+echo "$OUT" | grep -qF "Guard. $H/.codex/hooks/storegate-guard.sh" && ok "release-audit in the shared skill finds the codex guard" || { bad "release-audit in the shared skill finds the codex guard"; echo "$OUT" | grep -i guard | head -3; }
 run --tool gemini >/dev/null; run --tool codex uninstall >/dev/null
 OUT="$(env -u APP_STORE_GUARD_PATH HOME="$H" python3 "$H/.agents/skills/app-store-compliance/scripts/release-audit.py" "$APP" 2>&1)"
-echo "$OUT" | grep -qF "Guard. $H/.gemini/hooks/app-store-compliance-guard.sh" && ok "after codex is removed release-audit uses the gemini guard" || bad "after codex is removed release-audit uses the gemini guard"
+echo "$OUT" | grep -qF "Guard. $H/.gemini/hooks/storegate-guard.sh" && ok "after codex is removed release-audit uses the gemini guard" || bad "after codex is removed release-audit uses the gemini guard"
 rm -rf "$APP"
 
 # 7 the audit command points at the installed paths, and the Gemini command is valid TOML
 fresh; run --tool gemini >/dev/null; run --tool opencode >/dev/null
-python3 -c 'import sys,tomllib; d=tomllib.load(open(sys.argv[1],"rb")); sys.exit(0 if d["description"] and "{{args}}" in d["prompt"] else 1)' "$H/.gemini/commands/app-store-audit.toml" && ok "the gemini command is valid TOML with {{args}}" || bad "the gemini command is valid TOML with {{args}}"
-! grep -q "[~]/.claude" "$H/.gemini/commands/app-store-audit.toml" "$H/.config/opencode/commands/app-store-audit.md" && ok "the commands name no Claude Code path" || bad "the commands name no Claude Code path"
+python3 -c 'import sys,tomllib; d=tomllib.load(open(sys.argv[1],"rb")); sys.exit(0 if d["description"] and "{{args}}" in d["prompt"] else 1)' "$H/.gemini/commands/storegate-audit.toml" && ok "the gemini command is valid TOML with {{args}}" || bad "the gemini command is valid TOML with {{args}}"
+! grep -q "[~]/.claude" "$H/.gemini/commands/storegate-audit.toml" "$H/.config/opencode/commands/storegate-audit.md" && ok "the commands name no Claude Code path" || bad "the commands name no Claude Code path"
 
 # 8 --tool all installs into every tool it finds, and only those
 fresh; mkdir -p "$H/.codex" "$H/.cursor"
@@ -396,7 +396,7 @@ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if any("
 qrun --tool qwen doctor >/dev/null; RC=$?
 [ "$RC" -eq 0 ] && ok "qwen doctor checks \$QWEN_HOME" || bad "qwen doctor checks \$QWEN_HOME (rc=$RC)"
 qrun --tool qwen uninstall >/dev/null
-! grep -q "app-store-compliance-guard.sh" "$Q/settings.json" 2>/dev/null && ok "qwen uninstall edits \$QWEN_HOME/settings.json" || bad "qwen uninstall edits \$QWEN_HOME/settings.json"
+! grep -q "storegate-guard.sh" "$Q/settings.json" 2>/dev/null && ok "qwen uninstall edits \$QWEN_HOME/settings.json" || bad "qwen uninstall edits \$QWEN_HOME/settings.json"
 fresh; Q="$WORK/qhome$RANDOM"; mkdir -p "$Q"
 OUT="$(qrun --tool all --dry-run)"; RC=$?
 echo "$OUT" | grep -q "^Found. qwen$" && ok "--tool all finds qwen through \$QWEN_HOME" || bad "--tool all finds qwen through \$QWEN_HOME (rc=$RC)"
@@ -405,7 +405,7 @@ echo "$OUT" | grep -q "^Found. qwen$" && ok "--tool all finds qwen through \$QWE
 fresh; CA="$WORK/codexa$RANDOM"; CB="$WORK/codexb$RANDOM"; mkdir -p "$CA" "$CB"
 crun() { local c="$1"; shift; env -u QWEN_HOME -u XDG_CONFIG_HOME -u CLAUDE_CONFIG_DIR -u CLAUDE_PROJECT_DIR CODEX_HOME="$c" HOME="$H" bash "$INSTALL" "$@" 2>&1; }
 crun "$CA" --tool codex >/dev/null; crun "$CB" --tool codex >/dev/null; crun "$CB" --tool codex uninstall >/dev/null
-[ -f "$H/.agents/skills/app-store-compliance/SKILL.md" ] && grep -qF "$CA/hooks/app-store-compliance-guard.sh" "$H/.agents/skills/app-store-compliance/.guards" \
+[ -f "$H/.agents/skills/app-store-compliance/SKILL.md" ] && grep -qF "$CA/hooks/storegate-guard.sh" "$H/.agents/skills/app-store-compliance/.guards" \
   && ok "uninstalling one codex folder keeps the shared skill for the other" || bad "uninstalling one codex folder keeps the shared skill for the other"
 crun "$CA" --tool codex doctor >/dev/null; RC=$?
 [ "$RC" -eq 0 ] && ok "the remaining codex folder still passes doctor" || bad "the remaining codex folder still passes doctor (rc=$RC)"
@@ -422,7 +422,7 @@ run --tool kimi >/dev/null; run --tool kimi uninstall >/dev/null
 cmp -s "$H/.kimi-code/config.toml" "$WORK/kimi-crlf.toml" && ok "kimi uninstall keeps CRLF line endings" || bad "kimi uninstall keeps CRLF line endings"
 # 8f the OpenCode plugin never lets a submit through when the guard cannot run
 fresh; mkdir -p "$H/.config/opencode"; run --tool opencode >/dev/null
-rm -f "$(gdir opencode)/app-store-compliance-guard.sh"
+rm -f "$(gdir opencode)/storegate-guard.sh"
 if command -v node >/dev/null 2>&1; then
   RES="$(node --input-type=module -e '
 const m = await import(process.argv[1]);
@@ -434,7 +434,7 @@ console.log((await run("fast" + "lane deliver")) + " " + (await run("f\\ast" + "
 else ok "opencode guard-failure check skipped, node not installed"; fi
 # 8j OpenCode loads both plugin folders, and a call is still checked once
 fresh; mkdir -p "$H/.config/opencode"; run --tool opencode >/dev/null
-printf '#!/usr/bin/env bash\necho x >> "%s/count"\nexit 0\n' "$H" > "$(gdir opencode)/app-store-compliance-guard.sh"
+printf '#!/usr/bin/env bash\necho x >> "%s/count"\nexit 0\n' "$H" > "$(gdir opencode)/storegate-guard.sh"
 if command -v node >/dev/null 2>&1; then
   node --input-type=module -e '
 const a = await (await import(process.argv[1])).AppStoreCompliance({ directory: process.argv[3] });

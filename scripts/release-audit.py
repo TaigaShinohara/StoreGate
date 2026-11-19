@@ -9,7 +9,7 @@ import json
 import re
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-GUARD_NAME = "app-store-compliance-guard.sh"
+GUARD_NAME = "storegate-guard.sh"
 BLOCKING = ("critical", "high")
 LISTING_HINT = "Store listing not audited. Pull it with scripts/pull-metadata.sh, then pass --metadata <dir>."
 
@@ -353,7 +353,7 @@ def find_affected_files(target_dir, patterns_dict):
                         if (
                             "rejection-patterns.json" not in rel_path
                             and "release-audit.py" not in rel_path
-                            and "app-store-compliance-guard.sh" not in rel_path
+                            and "storegate-guard.sh" not in rel_path
                             and "RELEASE-READINESS-REPORT.md" not in rel_path
                         ):
                             affected[pid].append(rel_path)
@@ -401,7 +401,7 @@ def main():
         print(val_err)
         return 1
 
-    guard_test = os.path.join(ROOT, "agent-os", "hooks", "app-store-compliance-guard-test.sh")
+    guard_test = os.path.join(ROOT, "agent-os", "hooks", "storegate-guard-test.sh")
     if os.path.isfile(guard_test):
         guard_test_code, guard_test_out, guard_test_err = run_command(["bash", guard_test])
         if guard_test_code != 0:

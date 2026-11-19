@@ -253,7 +253,7 @@ GitHub reads an `ACCESSIBILITY.md` file from `.github`, the repository root, or 
 - Several documents use wide tables, which are slow to read with a screen reader and scroll sideways on a narrow screen.
 - The Pages site and the script output have not been tested with VoiceOver, NVDA, or JAWS, and no WCAG conformance claim is made for either.
 
-**Reporting a barrier.** Open an issue on [mjmirza/app-store-compliance](https://github.com/mjmirza/app-store-compliance/issues). For a script, use the guard or monitor bug template and include the command and its output. Name the assistive technology you use if you are comfortable doing so.
+**Reporting a barrier.** Open an issue on [TaigaShinohara/StoreGate](https://github.com/TaigaShinohara/StoreGate/issues). For a script, use the guard or monitor bug template and include the command and its output. Name the assistive technology you use if you are comfortable doing so.
 
 Sources. [Creating a default community health file](https://docs.github.com/en/communities/setting-up-your-project-for-healthy-contributions/creating-a-default-community-health-file), [Adding an accessibility page to your repository](https://docs.github.com/en/communities/setting-up-your-project-for-healthy-contributions/adding-an-accessibility-page-to-your-repository).
 

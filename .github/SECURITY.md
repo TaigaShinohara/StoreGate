@@ -12,7 +12,7 @@ The default branch is the only supported version. Fixes land on `main` and are n
 
 ## Reporting a vulnerability
 
-Report privately through GitHub's [Report a vulnerability](https://github.com/mjmirza/app-store-compliance/security/advisories/new) form. That opens a private advisory visible only to the maintainer.
+Report privately through GitHub's [Report a vulnerability](https://github.com/TaigaShinohara/StoreGate/security/advisories/new) form. That opens a private advisory visible only to the maintainer.
 
 Do not open a public issue for anything in the first list below.
 

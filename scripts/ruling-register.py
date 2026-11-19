@@ -352,7 +352,7 @@ def main():
         "register_version": doc["register_version"],
         "source_commit": git_commit(),
         "exported_on": str(today),
-        "license": "See LICENSE in mjmirza/app-store-compliance",
+        "license": "See LICENSE in TaigaShinohara/StoreGate",
         "requirements": doc["requirements"],
     }
     path = out / f"ruling-register-v{doc['register_version']}.json"

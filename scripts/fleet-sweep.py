@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-DEFAULT_GUARD = REPO / "agent-os" / "hooks" / "app-store-compliance-guard.sh"
+DEFAULT_GUARD = REPO / "agent-os" / "hooks" / "storegate-guard.sh"
 DEFAULT_REGISTER = REPO / "data" / "ruling-register.json"
 STORE_OF = {"ios": "apple", "android": "google"}
 MAX_WAIVER_DAYS = 180
@@ -438,7 +438,7 @@ def scanning_export(results):
                 "tool": {
                     "driver": {
                         "name": "app-store-compliance",
-                        "informationUri": "https://github.com/mjmirza/app-store-compliance",
+                        "informationUri": "https://github.com/TaigaShinohara/StoreGate",
                         "rules": rules,
                     }
                 },

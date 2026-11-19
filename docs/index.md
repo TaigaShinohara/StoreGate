@@ -10,7 +10,7 @@ description: How to avoid common App Store and Google Play rejections. Rejection
 - **117 rejection patterns** with the guideline, how to detect it in your code, and the fix.
 - **95 tracked deadlines** across 28 jurisdictions and platform scopes, including the EU AI Act, the Digital Services Act, COPPA and US state age laws.
 - **A pre-submission guard** that runs locally or inside AI coding tools like Claude Code, Codex and Cursor.
-- Free to read. Source on [GitHub](https://github.com/mjmirza/app-store-compliance).
+- Free to read. Source on [GitHub](https://github.com/TaigaShinohara/StoreGate).
 
 ## Start here
 
@@ -52,17 +52,17 @@ description: How to avoid common App Store and Google Play rejections. Rejection
 
 **Does the EU AI Act affect my app?** Possibly. Article 50 transparency duties apply from 2 August 2026, and which ones bind you depends on whether you are a provider or a deployer.
 
-More answers in the [full question index](questions.md) and the [Q&A discussions](https://github.com/mjmirza/app-store-compliance/discussions/categories/q-a).
+More answers in the [full question index](questions.md) and the [Q&A discussions](https://github.com/TaigaShinohara/StoreGate/discussions/categories/q-a).
 
 ## Run the guard
 
 ```bash
-git clone https://github.com/mjmirza/app-store-compliance ~/repositories/app-store-compliance
-bash ~/repositories/app-store-compliance/scripts/install.sh install
+git clone https://github.com/TaigaShinohara/StoreGate ~/repositories/StoreGate
+bash ~/repositories/StoreGate/scripts/install.sh install
 ```
 
 Maintained by [Mirza Iqbal](https://github.com/mjmirza). Not affiliated with Apple or Google. App Store is a trademark of Apple Inc. Google Play is a trademark of Google LLC.
 
 <script type="application/ld+json">
-{"@context":"https://schema.org","@type":"SoftwareSourceCode","name":"App Store Compliance Playbook","description":"Open playbook and pre-submission guard to stop App Store and Google Play rejections.","codeRepository":"https://github.com/mjmirza/app-store-compliance","programmingLanguage":["Shell","Python"],"author":{"@type":"Person","name":"Mirza Iqbal","url":"https://github.com/mjmirza","sameAs":["https://twitter.com/MirzaJhanzaib","https://next8n.com"]},"keywords":"App Store rejection, Google Play rejection, app review guidelines, privacy manifest, Data safety, account deletion, EU AI Act, COPPA"}
+{"@context":"https://schema.org","@type":"SoftwareSourceCode","name":"App Store Compliance Playbook","description":"Open playbook and pre-submission guard to stop App Store and Google Play rejections.","codeRepository":"https://github.com/TaigaShinohara/StoreGate","programmingLanguage":["Shell","Python"],"author":{"@type":"Person","name":"Mirza Iqbal","url":"https://github.com/mjmirza","sameAs":["https://twitter.com/MirzaJhanzaib","https://next8n.com"]},"keywords":"App Store rejection, Google Play rejection, app review guidelines, privacy manifest, Data safety, account deletion, EU AI Act, COPPA"}
 </script>

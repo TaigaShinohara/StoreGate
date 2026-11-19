@@ -861,7 +861,7 @@ def generate_pull_request(track_name, affected_files, item_title):
     for step in meta["migration_steps"]:
         migration_steps_lines.append(f"2. {step}")
     migration_steps_lines.append(
-        "3. Run the automated pre-submission compliance guard (`bash agent-os/hooks/app-store-compliance-guard.sh .`) to verify that the changes satisfy all local verification criteria."
+        "3. Run the automated pre-submission compliance guard (`bash agent-os/hooks/storegate-guard.sh .`) to verify that the changes satisfy all local verification criteria."
     )
 
     # Backward Compatibility

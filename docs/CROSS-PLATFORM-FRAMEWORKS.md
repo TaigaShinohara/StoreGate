@@ -14,7 +14,7 @@ generated the app, on top of the native checks.
 | Ionic / Capacitor / Cordova | `package.json` within 12 levels with a dependency on `@capacitor/*`, `@ionic/*`, or `cordova-*`, OR a `capacitor.config.*` / `config.xml` file within 12 levels |
 
 These depths come from the `find_app` calls in
-`agent-os/hooks/app-store-compliance-guard.sh`. Unity, .NET MAUI, Tauri mobile,
+`agent-os/hooks/storegate-guard.sh`. Unity, .NET MAUI, Tauri mobile,
 and Kotlin Multiplatform are searched within 6 levels.
 
 A project can match more than one framework flag (a Capacitor app that also
@@ -160,7 +160,7 @@ These are limits, not bugs waiting for a fix. Plan around them.
   are not detected. Unity, .NET MAUI, Tauri mobile, and Kotlin Multiplatform
   are, see the section above for what each one still cannot see.
 - **The submission regex errs toward firing.** `SUBMIT_RE` in
-  `agent-os/hooks/app-store-compliance-guard.sh` matches `eas build` with or
+  `agent-os/hooks/storegate-guard.sh` matches `eas build` with or
   without a `--platform` flag, also when global flags come before the
   subcommand. It also matches every `cap run` and `cap open`, so a local dev
   run with no release intent still triggers the guard.

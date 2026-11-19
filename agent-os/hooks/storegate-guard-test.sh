@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Test gauntlet for app-store-compliance-guard.sh
+# Test gauntlet for storegate-guard.sh
 # Covers positive, negative, override, fail-open, hook-mode silence, and stress cases.
 # @register: no
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-GUARD="$HERE/app-store-compliance-guard.sh"
-[ -x "$GUARD" ] || GUARD="bash $HERE/app-store-compliance-guard.sh"
+GUARD="$HERE/storegate-guard.sh"
+[ -x "$GUARD" ] || GUARD="bash $HERE/storegate-guard.sh"
 PASS=0; FAIL=0
 ok()   { PASS=$((PASS+1)); printf 'PASS  %s\n' "$1"; }
 bad()  { FAIL=$((FAIL+1)); printf 'FAIL  %s\n' "$1"; }

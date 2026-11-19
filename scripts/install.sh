@@ -9,11 +9,11 @@ if [ -z "${CLAUDE_CONFIG_DIR:-}" ] && [ -z "${HOME:-}" ]; then
   exit 1
 fi
 CONF="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
-GUARD_NAME="app-store-compliance-guard.sh"
+GUARD_NAME="storegate-guard.sh"
 GUARD_SRC="$REPO/agent-os/hooks/$GUARD_NAME"
 GUARD="$CONF/hooks/$GUARD_NAME"
 SKILL="$CONF/skills/app-store-compliance"
-CMD_FILE="$CONF/commands/app-store-audit.md"
+CMD_FILE="$CONF/commands/storegate-audit.md"
 SETTINGS="$CONF/settings.json"
 PAYLOAD_DIRS="docs data references templates scripts"
 # Claude Code on Windows may run commands through PowerShell, so the hook covers both there.
@@ -339,7 +339,7 @@ verify() {
     [ -e "$SKILL/$p" ] || missing="$missing $p"
   done
   if [ -z "$missing" ]; then good "skill payload complete at $SHOWN/skills/app-store-compliance"; else fail "skill payload is missing.$missing"; fi
-  if [ -f "$CMD_FILE" ]; then good "slash command /app-store-audit installed"; else fail "slash command missing at $SHOWN/commands/app-store-audit.md"; fi
+  if [ -f "$CMD_FILE" ]; then good "slash command /storegate-audit installed"; else fail "slash command missing at $SHOWN/commands/storegate-audit.md"; fi
   local reg; reg="$(registered_cmd)"
   if [ -n "$reg" ]; then good "hook registered for Bash in $SHOWN/settings.json"; else fail "no working hook entry for Bash in $SHOWN/settings.json"; fi
 
@@ -368,7 +368,7 @@ verify() {
   if [ "$PROBLEMS" -eq 0 ]; then
     say "Install verified."
     say "Check your app now.   bash $SHOWN/hooks/$GUARD_NAME /path/to/your/app"
-    say "Inside Claude Code.   /app-store-audit"
+    say "Inside Claude Code.   /storegate-audit"
     say "Restart Claude Code once so it loads the hook."
     return 0
   fi
@@ -382,7 +382,7 @@ do_install() {
     say "Dry run. Nothing is written."
     say "  would copy the guard to          $SHOWN/hooks/$GUARD_NAME"
     say "  would copy the skill to          $SHOWN/skills/app-store-compliance (SKILL.md, $PAYLOAD_DIRS, .citation-allowlist)"
-    say "  would copy the slash command to  $SHOWN/commands/app-store-audit.md"
+    say "  would copy the slash command to  $SHOWN/commands/storegate-audit.md"
     say "  would add one PreToolUse Bash hook entry to $SHOWN/settings.json, keeping every other key, with a backup"
     say "  would run the guard against a sample app to prove it blocks"
     exit 0
@@ -399,7 +399,7 @@ do_install() {
     cp -R "$REPO/$d" "$SKILL/$d"
   done
   rm -rf "$SKILL/scripts/__pycache__"
-  cp "$REPO/agent-os/commands/app-store-audit.md" "$CMD_FILE"
+  cp "$REPO/agent-os/commands/storegate-audit.md" "$CMD_FILE"
   good "files copied"
 
   settings_edit add; local rc=$?

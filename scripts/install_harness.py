@@ -12,7 +12,7 @@ import tempfile
 import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-GUARD_NAME = "app-store-compliance-guard.sh"
+GUARD_NAME = "storegate-guard.sh"
 PAYLOAD_DIRS = ("docs", "data", "references", "templates", "scripts")
 SUBMIT = "fast" + "lane deliver"
 PROBLEMS = []
@@ -151,7 +151,7 @@ def layout(tool, repo_dir=None):
         return {
             "hooks": os.path.join(base, "hooks"),
             "config": os.path.join(base, "plugins", "app-store-compliance.js"),
-            "command": os.path.join(base, "commands", "app-store-audit.md"),
+            "command": os.path.join(base, "commands", "storegate-audit.md"),
             "wrap": True,
         }
     if tool == "droid":
@@ -192,7 +192,7 @@ def layout(tool, repo_dir=None):
         "kimi": "config.toml",
     }
     command = (
-        os.path.join(base, "commands", "app-store-audit.toml")
+        os.path.join(base, "commands", "storegate-audit.toml")
         if tool == "gemini"
         else None
     )
@@ -524,7 +524,7 @@ def kimi_live(h):
 
 def command_text(tool, guard):
     with open(
-        os.path.join(REPO, "agent-os", "commands", "app-store-audit.md"),
+        os.path.join(REPO, "agent-os", "commands", "storegate-audit.md"),
         encoding="utf-8",
     ) as f:
         md = f.read()

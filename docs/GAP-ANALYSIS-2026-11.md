@@ -45,7 +45,7 @@ The same announcement says trader status must be declared in Play Console starti
 
 ## 5. Asia-Pacific, Canada, Australia, Brazil, verified deltas
 
-The regional pass for Asia-Pacific, Canada, Australia, and Brazil was still running when this sweep merged. Its findings landed in a follow-up change on 15 November 2026 after each item was read on its primary source. Korea's AI development reuse rule (Act No. 21910, from 9 March 2027), Indonesia's PP TUNAS self-assessment deadline (31 December 2026), and China's CAC filing window for platforms with a large minor audience (closing around 16 November 2026). Items already confirmed in [#659](https://github.com/mjmirza/app-store-compliance/issues/659) on 14 November 2026. Korea's mandatory privacy certification from 1 July 2027, Japan's APPI amendment as Act No. 56 of 2026, and the India DPDP rule 4 Consent Manager date.
+The regional pass for Asia-Pacific, Canada, Australia, and Brazil was still running when this sweep merged. Its findings landed in a follow-up change on 15 November 2026 after each item was read on its primary source. Korea's AI development reuse rule (Act No. 21910, from 9 March 2027), Indonesia's PP TUNAS self-assessment deadline (31 December 2026), and China's CAC filing window for platforms with a large minor audience (closing around 16 November 2026). Items already confirmed in [#659](https://github.com/TaigaShinohara/StoreGate/issues/659) on 14 November 2026. Korea's mandatory privacy certification from 1 July 2027, Japan's APPI amendment as Act No. 56 of 2026, and the India DPDP rule 4 Consent Manager date.
 
 ## 6. Unverified, deliberately not encoded
 
@@ -53,7 +53,7 @@ The regional pass for Asia-Pacific, Canada, Australia, and Brazil was still runn
 - Ofcom's amended Illegal Content Codes of Practice (issued 12 October 2026, in force 2 November 2026) and its categorised-services risk assessment dates. ofcom.org.uk answers scripted reads with a browser challenge, so the wording was seen only through a search index.
 - The UK under-16 social media regulations, reported to be laid in December 2026 for spring 2027. Secondary only.
 - The Alabama App Store Accountability Act challenge (CCIA, reported 28 October 2026). No docket found.
-- Korea MyData expansion dates and the Australia App Distribution Services Code on the live eSafety register, carried over from [#659](https://github.com/mjmirza/app-store-compliance/issues/659).
+- Korea MyData expansion dates and the Australia App Distribution Services Code on the live eSafety register, carried over from [#659](https://github.com/TaigaShinohara/StoreGate/issues/659).
 
 ## 7. Follow-up, 15 November 2026
 

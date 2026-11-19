@@ -1,20 +1,20 @@
 cff-version: 1.2.0
-title: App Store Compliance Playbook
-message: If you use this playbook in your work, please cite it.
+title: StoreGate
+message: If you use StoreGate in your work, please cite it.
 type: software
 authors:
+  - alias: TaigaShinohara
+    name: Taiga Shinohara
   - alias: mjmirza
     name: Mirza Iqbal
 version: 2.4.0
 date-released: '2026-11-15'
-repository-code: https://github.com/mjmirza/app-store-compliance
-url: https://github.com/mjmirza/app-store-compliance
+repository-code: https://github.com/TaigaShinohara/StoreGate
+url: https://github.com/TaigaShinohara/StoreGate
 abstract: >-
-  An enterprise reference and automated guard that maps Apple App Store and
-  Google Play rejection patterns to the exact guideline and the concrete fix,
-  with machine-readable rejection data, a pre-submission guard, and continuous
-  monitors for Apple, Android, privacy, security, AI policy, accessibility, and
-  global regulatory deadlines.
+  StoreGate is a forked and customized App Store and Google Play compliance
+  reference and automated pre-submission guard, derived from App Store
+  Compliance Playbook.
 keywords:
   - app store review
   - google play policy

@@ -158,7 +158,7 @@ EOF
 
 # Real guard, end to end. An empty folder must never be READY.
 mkdir -p "$T/empty"; python3 -c "import json;print(json.dumps({'apps':[{'name':'empty','path':'$T/empty','readiness':{'a':True}}]}))" > "$T/fleet.json"
-FLEET_SWEEP_GUARD="$HERE/../agent-os/hooks/app-store-compliance-guard.sh" python3 "$SWEEP" "$T/fleet.json" --no-register > "$T/out.txt" 2>&1; rc=$?
+FLEET_SWEEP_GUARD="$HERE/../agent-os/hooks/storegate-guard.sh" python3 "$SWEEP" "$T/fleet.json" --no-register > "$T/out.txt" 2>&1; rc=$?
 [ "$rc" = 1 ] && has "NOT_CHECKED" && ok || bad "real guard on an empty folder is NOT_CHECKED (rc=$rc)"
 
 echo "fleet-sweep-test. $pass passed, $fail failed"

@@ -24,7 +24,7 @@ jobs:
         run: python3 scripts/deadline-checker.py
 
       - name: Guard test suite
-        run: bash agent-os/hooks/app-store-compliance-guard-test.sh
+        run: bash agent-os/hooks/storegate-guard-test.sh
 
       - name: Installer test suite
         run: |

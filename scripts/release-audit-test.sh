@@ -66,7 +66,7 @@ W="$(mktemp -d)"
 SK="$W/c/skills/app-store-compliance"
 mkdir -p "$SK" "$W/c/hooks"
 cp -R data docs references templates scripts VERSION "$SK/"
-cp agent-os/hooks/app-store-compliance-guard.sh "$W/c/hooks/"
+cp agent-os/hooks/storegate-guard.sh "$W/c/hooks/"
 CL="$W/clean"; mkdir -p "$CL/en-US"
 printf 'Lumina Studio' > "$CL/en-US/name.txt"
 printf 'A focused editor with layers and presets.' > "$CL/en-US/description.txt"
@@ -78,7 +78,7 @@ STUB_HIGH="$W/high.sh"; printf '#!/usr/bin/env bash\necho "  [HIGH]     BOTH-PLA
 STUB_ERR="$W/err.sh"; printf '#!/usr/bin/env bash\necho "guard crashed" >&2\nexit 2\n' > "$STUB_ERR"
 
 OUT="$(python3 "$SK/scripts/release-audit.py" "$CL" 2>&1)"
-echo "$OUT" | grep -qF "Guard. $W/c/hooks/app-store-compliance-guard.sh" && echo "$OUT" | grep -q "Scanning your app" && ! echo "$OUT" | grep -q "guard tests failed" && ok "the installed layout finds the installed guard and never needs its test file" || bad "the installed layout finds the installed guard and never needs its test file"
+echo "$OUT" | grep -qF "Guard. $W/c/hooks/storegate-guard.sh" && echo "$OUT" | grep -q "Scanning your app" && ! echo "$OUT" | grep -q "guard tests failed" && ok "the installed layout finds the installed guard and never needs its test file" || bad "the installed layout finds the installed guard and never needs its test file"
 
 OUT="$(APP_STORE_GUARD_PATH="$STUB_PASS" python3 "$SK/scripts/release-audit.py" "$CL" 2>&1)"; RC=$?
 [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "Overall Status: PASSED" && ok "a clean app with complete scans passes the gate" || bad "a clean app with complete scans passes the gate (rc=$RC)"

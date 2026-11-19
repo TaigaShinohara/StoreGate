@@ -23,3 +23,9 @@ Earlier releases keep the licence they shipped with. Releases before
 2026-08-24 remain under MIT (code) and CC BY 4.0 (content). Releases
 between 2026-08-24 and 2026-08-27 remain under ORA 1.0 with its own
 2029 Apache-2.0 sunset.
+
+
+---
+StoreGate
+Modifications Copyright (c) 2026 Taiga Shinohara
+Forked from https://github.com/mjmirza/app-store-compliance

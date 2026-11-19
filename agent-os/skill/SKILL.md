@@ -31,7 +31,7 @@ The compliance reference lives in the `app-store-compliance` repo. The key files
 - `docs/PLATFORM-MECHANICS-2026.md` the platform-mechanics and newer-policy hard rules with dated sources. macOS notarization, Guideline 4.2 and 4.3 with the June 2026 saturation tightening, reader apps, France ANSSI encryption, visionOS and watchOS and tvOS specifics, Android developer verification, Foreground Service types, Play Integrity, Play Billing v8, target API, Health Connect, and the cross-cutting CSAM, UGC, accessibility, sanctions, and PCI items. Load it for any app whose type touches these.
 - `references/` the structured, AI loadable tree. Load `references/guidelines/by-app-type/<type>.md` for the app at hand and the relevant `references/rules/<category>.md` files for full context before judging.
 - `templates/REVIEW-NOTES-TEMPLATE.md` the review notes template to hand the user for a new submission.
-- `app-store-compliance-guard.sh` the automated scanner. The install puts it in your tool's hooks folder, listed in Step 2.
+- `storegate-guard.sh` the automated scanner. The install puts it in your tool's hooks folder, listed in Step 2.
 
 For the strongest audit, also run the metadata layer. A large share of rejections live in the listing text, not the source.
 
@@ -67,19 +67,19 @@ Run the guard against the project root. Use the copy the install put in your too
 
 | Tool | Guard |
 |---|---|
-| Claude Code | `~/.claude/hooks/app-store-compliance-guard.sh` |
-| Codex CLI | `~/.codex/hooks/app-store-compliance-guard.sh` |
-| Gemini CLI | `~/.gemini/hooks/app-store-compliance-guard.sh` |
-| OpenCode | `~/.config/opencode/hooks/app-store-compliance-guard.sh` |
-| Cursor | `~/.cursor/hooks/app-store-compliance-guard.sh` |
-| Copilot CLI | `~/.copilot/hooks/app-store-compliance-guard.sh`, or under `$COPILOT_HOME` when set |
-| Grok | `~/.grok/hooks/app-store-compliance-guard.sh` |
-| Qwen Code | `~/.qwen/hooks/app-store-compliance-guard.sh`, or under `$QWEN_HOME` when set |
-| Kimi Code | `~/.kimi-code/hooks/app-store-compliance-guard.sh`, or under `$KIMI_CODE_HOME` when set |
-| Factory Droid | `~/.factory/hooks/app-store-compliance-guard.sh` |
-| Auggie | `~/.augment/hooks/app-store-compliance-guard.sh` |
-| Windsurf | `~/.codeium/windsurf/hooks/app-store-compliance-guard.sh` |
-| From a checkout | `~/repositories/app-store-compliance/agent-os/hooks/app-store-compliance-guard.sh` |
+| Claude Code | `~/.claude/hooks/storegate-guard.sh` |
+| Codex CLI | `~/.codex/hooks/storegate-guard.sh` |
+| Gemini CLI | `~/.gemini/hooks/storegate-guard.sh` |
+| OpenCode | `~/.config/opencode/hooks/storegate-guard.sh` |
+| Cursor | `~/.cursor/hooks/storegate-guard.sh` |
+| Copilot CLI | `~/.copilot/hooks/storegate-guard.sh`, or under `$COPILOT_HOME` when set |
+| Grok | `~/.grok/hooks/storegate-guard.sh` |
+| Qwen Code | `~/.qwen/hooks/storegate-guard.sh`, or under `$QWEN_HOME` when set |
+| Kimi Code | `~/.kimi-code/hooks/storegate-guard.sh`, or under `$KIMI_CODE_HOME` when set |
+| Factory Droid | `~/.factory/hooks/storegate-guard.sh` |
+| Auggie | `~/.augment/hooks/storegate-guard.sh` |
+| Windsurf | `~/.codeium/windsurf/hooks/storegate-guard.sh` |
+| From a checkout | `~/repositories/StoreGate/agent-os/hooks/storegate-guard.sh` |
 
 ```
 bash <guard path from the table> "/path/to/app/project"

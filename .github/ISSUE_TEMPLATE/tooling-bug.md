@@ -7,7 +7,7 @@ labels: ["bug"]
 
 ## Which script
 
-<!-- For example agent-os/hooks/app-store-compliance-guard.sh, or scripts/monitor-privacy.py. -->
+<!-- For example agent-os/hooks/storegate-guard.sh, or scripts/monitor-privacy.py. -->
 
 ## What you ran
 

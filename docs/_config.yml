@@ -1,22 +1,18 @@
-title: App Store Compliance Playbook
+title: StoreGate
 description: >-
   Avoid common App Store and Google Play rejections. An open playbook and pre-submission guard with
-  117 rejection patterns and fixes, privacy manifest and Data safety checks, and 95 tracked
-  deadlines across 28 jurisdictions and platform scopes.
-url: https://mjmirza.github.io
-baseurl: /app-store-compliance
+  rejection patterns and fixes, privacy manifest and Data safety checks, and tracked
+  deadlines across jurisdictions and platform scopes.
+url: https://taigashinohara.github.io
+baseurl: /StoreGate
 lang: en
 theme: jekyll-theme-primer
-author: Mirza Iqbal
-github_username: mjmirza
-twitter:
-  username: MirzaJhanzaib
+author: Taiga Shinohara
+github_username: TaigaShinohara
 social:
-  name: Mirza Iqbal
+  name: Taiga Shinohara
   links:
-    - https://github.com/mjmirza
-    - https://twitter.com/MirzaJhanzaib
-    - https://next8n.com
+    - https://github.com/TaigaShinohara
 plugins:
   - jekyll-seo-tag
   - jekyll-sitemap
@@ -30,5 +26,3 @@ titles_from_headings:
   strip_title: true
 include:
   - llms.txt
-webmaster_verifications:
-  google: dHbguG3JdSMV02JY_ltLOKoI--3cG4dQEEkT2K_AnmA

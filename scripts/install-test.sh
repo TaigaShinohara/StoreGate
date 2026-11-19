@@ -13,22 +13,22 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 fresh() { C="$WORK/c$RANDOM$RANDOM"; mkdir -p "$C"; }
 run()   { CLAUDE_CONFIG_DIR="$C" bash "$INSTALL" "$@" 2>&1; }
-hooks() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(sum("app-store-compliance-guard.sh" in h.get("command","") for e in d.get("hooks",{}).get("PreToolUse",[]) for h in e.get("hooks",[])))' "$C/settings.json"; }
+hooks() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(sum("storegate-guard.sh" in h.get("command","") for e in d.get("hooks",{}).get("PreToolUse",[]) for h in e.get("hooks",[])))' "$C/settings.json"; }
 
 # 1 a fresh install lands every part and proves itself
 fresh
 OUT="$(run)"; RC=$?
 [ "$RC" -eq 0 ] && ok "fresh install exits 0" || bad "fresh install exits 0 (rc=$RC)"
-[ -x "$C/hooks/app-store-compliance-guard.sh" ] && ok "guard is installed and executable" || bad "guard is installed and executable"
+[ -x "$C/hooks/storegate-guard.sh" ] && ok "guard is installed and executable" || bad "guard is installed and executable"
 for p in SKILL.md data/rejection-patterns.json data/regulatory-deadlines.json docs/APPLE.md references scripts/deadline-checker.py scripts/validate-privacy-manifest.py templates .citation-allowlist; do
   [ -e "$C/skills/app-store-compliance/$p" ] || { bad "skill payload has $p"; continue; }
 done
 [ -e "$C/skills/app-store-compliance/.citation-allowlist" ] && ok "skill payload is complete, allowlist included" || bad "skill payload is complete, allowlist included"
-[ -f "$C/commands/app-store-audit.md" ] && ok "slash command is installed" || bad "slash command is installed"
+[ -f "$C/commands/storegate-audit.md" ] && ok "slash command is installed" || bad "slash command is installed"
 [ "$(hooks)" = "1" ] && ok "hook is registered once in settings.json" || bad "hook is registered once in settings.json (got $(hooks))"
-python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); e=[h for x in d["hooks"]["PreToolUse"] if x.get("matcher")=="Bash" for h in x["hooks"] if "app-store-compliance-guard.sh" in h["command"]]; sys.exit(0 if e and e[0].get("timeout",0)>=120 and e[0].get("type")=="command" else 1)' "$C/settings.json" && ok "hook entry is a Bash PreToolUse command with a 120 second timeout" || bad "hook entry is a Bash PreToolUse command with a 120 second timeout"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); e=[h for x in d["hooks"]["PreToolUse"] if x.get("matcher")=="Bash" for h in x["hooks"] if "storegate-guard.sh" in h["command"]]; sys.exit(0 if e and e[0].get("timeout",0)>=120 and e[0].get("type")=="command" else 1)' "$C/settings.json" && ok "hook entry is a Bash PreToolUse command with a 120 second timeout" || bad "hook entry is a Bash PreToolUse command with a 120 second timeout"
 echo "$OUT" | grep -q "^Install verified\." && ok "install ends with a verified line" || bad "install ends with a verified line"
-echo "$OUT" | grep -q "bash .*app-store-compliance-guard.sh /path/to/your/app" && ok "install prints the one command to run next" || bad "install prints the one command to run next"
+echo "$OUT" | grep -q "bash .*storegate-guard.sh /path/to/your/app" && ok "install prints the one command to run next" || bad "install prints the one command to run next"
 
 # 2 running it again changes nothing and adds no second entry
 BEFORE="$(cat "$C/settings.json")"
@@ -63,12 +63,12 @@ OUT="$(run doctor)"; RC=$?
 [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "^Install verified\." && ok "doctor passes after an install" || bad "doctor passes after an install (rc=$RC)"
 
 # 7 doctor notices a guard that was edited or is stale
-printf '\n# local edit\n' >> "$C/hooks/app-store-compliance-guard.sh"
+printf '\n# local edit\n' >> "$C/hooks/storegate-guard.sh"
 OUT="$(run doctor)"; RC=$?
 echo "$OUT" | grep -q "differs from this checkout" && ok "doctor reports a guard that differs from the checkout" || bad "doctor reports a guard that differs from the checkout"
 
 # 8 doctor catches a guard that no longer blocks
-printf '#!/usr/bin/env bash\nexit 0\n' > "$C/hooks/app-store-compliance-guard.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$C/hooks/storegate-guard.sh"
 run doctor >/dev/null; RC=$?
 [ "$RC" -eq 1 ] && ok "doctor fails when the guard does not block a bad app" || bad "doctor fails when the guard does not block a bad app (rc=$RC)"
 
@@ -77,7 +77,7 @@ fresh
 SHIM="$(mktemp -d)"
 for b in bash cp rm mkdir chmod cat grep sed awk find xargs tr head tail mktemp printf wc sort uniq cut dirname basename date cmp mv ls env plutil xmllint; do p="$(command -v "$b" 2>/dev/null)"; [ -n "$p" ] && ln -s "$p" "$SHIM/$b"; done
 OUT="$(PATH="$SHIM" CLAUDE_CONFIG_DIR="$C" bash "$INSTALL" 2>&1)"; RC=$?
-[ -x "$C/hooks/app-store-compliance-guard.sh" ] && [ ! -f "$C/settings.json" ] && echo "$OUT" | grep -q '"PreToolUse"' && [ "$RC" -eq 1 ] && ok "without python3 or jq the block is printed for a manual paste" || bad "without python3 or jq the block is printed for a manual paste (rc=$RC)"
+[ -x "$C/hooks/storegate-guard.sh" ] && [ ! -f "$C/settings.json" ] && echo "$OUT" | grep -q '"PreToolUse"' && [ "$RC" -eq 1 ] && ok "without python3 or jq the block is printed for a manual paste" || bad "without python3 or jq the block is printed for a manual paste (rc=$RC)"
 rm -rf "$SHIM"
 
 # 10 uninstall removes only what the installer added
@@ -85,7 +85,7 @@ fresh
 printf '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash ~/other.sh"}]}]}}' > "$C/settings.json"
 run >/dev/null
 run uninstall >/dev/null; RC=$?
-[ "$RC" -eq 0 ] && [ ! -e "$C/hooks/app-store-compliance-guard.sh" ] && [ ! -e "$C/skills/app-store-compliance" ] && [ "$(hooks)" = "0" ] && grep -q "other.sh" "$C/settings.json" && ok "uninstall removes the guard, skill and entry, and keeps other hooks" || bad "uninstall removes the guard, skill and entry, and keeps other hooks (rc=$RC)"
+[ "$RC" -eq 0 ] && [ ! -e "$C/hooks/storegate-guard.sh" ] && [ ! -e "$C/skills/app-store-compliance" ] && [ "$(hooks)" = "0" ] && grep -q "other.sh" "$C/settings.json" && ok "uninstall removes the guard, skill and entry, and keeps other hooks" || bad "uninstall removes the guard, skill and entry, and keeps other hooks (rc=$RC)"
 
 # 11 an unknown subcommand is refused
 fresh
@@ -93,9 +93,9 @@ run frobnicate >/dev/null; RC=$?
 [ "$RC" -eq 2 ] && [ -z "$(ls -A "$C")" ] && ok "an unknown subcommand exits 2 and writes nothing" || bad "an unknown subcommand exits 2 and writes nothing (rc=$RC)"
 
 # 12 an entry that names the guard but cannot fire for Bash does not count as registered
-bash_entries() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(sum(1 for e in d["hooks"]["PreToolUse"] if e.get("matcher")=="Bash" for h in e["hooks"] if h.get("command","").startswith("bash ") and "#" not in h["command"] and h["command"].rstrip().rstrip(chr(39)).endswith("app-store-compliance-guard.sh")))' "$C/settings.json"; }
+bash_entries() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(sum(1 for e in d["hooks"]["PreToolUse"] if e.get("matcher")=="Bash" for h in e["hooks"] if h.get("command","").startswith("bash ") and "#" not in h["command"] and h["command"].rstrip().rstrip(chr(39)).endswith("storegate-guard.sh")))' "$C/settings.json"; }
 fresh
-printf '{"hooks":{"PreToolUse":[{"matcher":"Read","hooks":[{"type":"command","command":"bash ~/.claude/hooks/app-store-compliance-guard.sh"}]},{"matcher":"Bash","hooks":[{"type":"command","command":"true # app-store-compliance-guard.sh"}]}]}}' > "$C/settings.json"
+printf '{"hooks":{"PreToolUse":[{"matcher":"Read","hooks":[{"type":"command","command":"bash ~/.claude/hooks/storegate-guard.sh"}]},{"matcher":"Bash","hooks":[{"type":"command","command":"true # storegate-guard.sh"}]}]}}' > "$C/settings.json"
 run >/dev/null; RC=$?
 [ "$RC" -eq 0 ] && [ "$(bash_entries)" = "1" ] && ok "a guard entry on the wrong matcher or behind a comment is not trusted, a working one is added" || bad "a guard entry on the wrong matcher or behind a comment is not trusted (rc=$RC)"
 
@@ -111,7 +111,7 @@ rm -rf "$FX"
 
 # 14 doctor runs the registered command itself, so an entry that cannot fire fails the check
 fresh; run >/dev/null
-python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["hooks"]["PreToolUse"][0]["hooks"][0]["command"]="bash /no/such/app-store-compliance-guard.sh"; json.dump(d,open(p,"w"))' "$C/settings.json"
+python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["hooks"]["PreToolUse"][0]["hooks"][0]["command"]="bash /no/such/storegate-guard.sh"; json.dump(d,open(p,"w"))' "$C/settings.json"
 run doctor >/dev/null; RC=$?
 [ "$RC" -eq 1 ] && ok "doctor fails when the registered command cannot run" || bad "doctor fails when the registered command cannot run (rc=$RC)"
 for patch in 'h["type"]="prompt"' 'h["timeout"]=1'; do
@@ -154,11 +154,11 @@ fi
 
 # 18 a hook for a guard of the same file name in another folder is somebody else's. It is not trusted and not removed.
 fresh
-python3 -c 'import json,sys; json.dump({"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash /opt/other/app-store-compliance-guard.sh"}]}]}}, sys.stdout)' > "$C/settings.json"
+python3 -c 'import json,sys; json.dump({"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash /opt/other/storegate-guard.sh"}]}]}}, sys.stdout)' > "$C/settings.json"
 run >/dev/null; RC=$?
 [ "$RC" -eq 0 ] && [ "$(hooks "$C/settings.json")" = "2" ] && ok "a same-named guard in another folder does not count as installed" || bad "a same-named guard in another folder does not count as installed (rc=$RC entries=$(hooks "$C/settings.json"))"
 run uninstall >/dev/null
-[ "$(hooks "$C/settings.json")" = "1" ] && grep -q "/opt/other/app-store-compliance-guard.sh" "$C/settings.json" && ok "uninstall leaves the other folder's hook in place" || bad "uninstall leaves the other folder's hook in place (entries=$(hooks "$C/settings.json"))"
+[ "$(hooks "$C/settings.json")" = "1" ] && grep -q "/opt/other/storegate-guard.sh" "$C/settings.json" && ok "uninstall leaves the other folder's hook in place" || bad "uninstall leaves the other folder's hook in place (entries=$(hooks "$C/settings.json"))"
 
 # 19 no HOME and no CLAUDE_CONFIG_DIR is a clear message, never a crash. HOME alone missing still works.
 OUT="$(env -u HOME -u CLAUDE_CONFIG_DIR bash "$INSTALL" --dry-run 2>&1)"; RC=$?
@@ -169,7 +169,7 @@ OUT="$(env -u HOME CLAUDE_CONFIG_DIR="$C" bash "$INSTALL" --dry-run 2>&1)"; RC=$
 # 20 the default folder written with a braced HOME is still this folder's hook, so no second entry is added.
 H="$WORK/home$RANDOM"; mkdir -p "$H/.claude"
 C="$H/.claude"
-python3 -c 'import json,sys; json.dump({"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash \"${HOME}/.claude/hooks/app-store-compliance-guard.sh\"","timeout":120}]}]}}, sys.stdout)' > "$H/.claude/settings.json"
+python3 -c 'import json,sys; json.dump({"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash \"${HOME}/.claude/hooks/storegate-guard.sh\"","timeout":120}]}]}}, sys.stdout)' > "$H/.claude/settings.json"
 env -u CLAUDE_CONFIG_DIR HOME="$H" bash "$INSTALL" >/dev/null 2>&1; RC=$?
 [ "$RC" -eq 0 ] && [ "$(hooks)" = "1" ] && ok "a hook written with a braced HOME counts as installed" || bad "a hook written with a braced HOME counts as installed (rc=$RC entries=$(hooks))"
 
@@ -177,7 +177,7 @@ env -u CLAUDE_CONFIG_DIR HOME="$H" bash "$INSTALL" >/dev/null 2>&1; RC=$?
 fresh
 python3 - "$C" > "$C/settings.json" <<'PYT'
 import json, sys
-cmd = "bash %s/hooks/audit-wrapper.sh --guard %s/hooks/app-store-compliance-guard.sh" % (sys.argv[1], sys.argv[1])
+cmd = "bash %s/hooks/audit-wrapper.sh --guard %s/hooks/storegate-guard.sh" % (sys.argv[1], sys.argv[1])
 json.dump({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": cmd}]}]}}, sys.stdout)
 PYT
 run >/dev/null; RC=$?
@@ -186,7 +186,7 @@ run uninstall >/dev/null
 [ "$(hooks)" = "1" ] && grep -q "audit-wrapper.sh" "$C/settings.json" && ok "uninstall leaves the wrapper hook in place" || bad "uninstall leaves the wrapper hook in place (entries=$(hooks))"
 
 # 22 only the exact command counts. A longer file name, or the path run without bash, is somebody else's hook.
-for OTHER in "bash $WORK/x/hooks/app-store-compliance-guard.sh.backdoor" "$WORK/x/hooks/app-store-compliance-guard.sh"; do
+for OTHER in "bash $WORK/x/hooks/storegate-guard.sh.backdoor" "$WORK/x/hooks/storegate-guard.sh"; do
   C="$WORK/x"; rm -rf "$C"; mkdir -p "$C"
   python3 -c 'import json,sys; json.dump({"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":sys.argv[1]}]}]}}, sys.stdout)' "$OTHER" > "$C/settings.json"
   run >/dev/null; RC=$?

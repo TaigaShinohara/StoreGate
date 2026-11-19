@@ -13,7 +13,7 @@ Run a full pre submission compliance audit on a mobile app project so it passes 
 2. Run the automated guard against the project root and capture the ranked findings.
 
 ```
-bash ~/.claude/hooks/app-store-compliance-guard.sh <project-path>
+bash ~/.claude/hooks/storegate-guard.sh <project-path>
 ```
 
 2b. Load the structured references for full context. From `~/.claude/skills/app-store-compliance/references/` load the by app type file that matches the app and the relevant rule category files, so the audit reasons from the full guideline set, not only the guard output. Offer the user `templates/REVIEW-NOTES-TEMPLATE.md` for a new submission.
@@ -41,5 +41,5 @@ bash ~/.claude/hooks/app-store-compliance-guard.sh <project-path>
 ## Reference
 
 - Skill. `~/.claude/skills/app-store-compliance/`
-- Guard. `~/.claude/hooks/app-store-compliance-guard.sh`
-- Public playbook. https://github.com/mjmirza/app-store-compliance
+- Guard. `~/.claude/hooks/storegate-guard.sh`
+- Public playbook. https://github.com/TaigaShinohara/StoreGate
