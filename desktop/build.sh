@@ -15,6 +15,21 @@ swift_build() {
     -module-cache-path "$build/ModuleCache" "$@"
 }
 
+build_icon() {
+  local iconset="$build/StoreGate.iconset"
+  local source="$here/Resources/AppIcon.png"
+  local size retina
+  mkdir -p "$iconset"
+  for size in 16 32 128 256 512; do
+    retina=$((size * 2))
+    /usr/bin/sips -z "$size" "$size" "$source" \
+      --out "$iconset/icon_${size}x${size}.png" >/dev/null
+    /usr/bin/sips -z "$retina" "$retina" "$source" \
+      --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+  done
+  /usr/bin/iconutil --convert icns --output "$bundle/Contents/Resources/StoreGate.icns" "$iconset"
+}
+
 case "${1:-}" in
   --test)
     swift_build "$here/Sources/ReleaseFlow.swift" "$here/Tests/ReleaseFlowChecks.swift" -o "$build/ReleaseFlowChecks"
@@ -30,6 +45,7 @@ case "${1:-}" in
     mkdir -p "$bundle/Contents/MacOS"
     resources="$bundle/Contents/Resources/StoreGateTools"
     mkdir -p "$resources/scripts" "$resources/data"
+    build_icon
     cp "$here/Resources/audit_bridge.py" "$resources/"
     cp "$repo/scripts/metadata-audit.py" "$repo/scripts/ruling-register.py" "$resources/scripts/"
     cp "$repo/data/rejection-patterns.json" "$repo/data/ruling-register.json" "$resources/data/"

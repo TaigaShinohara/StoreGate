@@ -10,6 +10,8 @@
     <string>StoreGate</string>
     <key>CFBundleIdentifier</key>
     <string>io.github.taigashinohara.storegate.prototype</string>
+    <key>CFBundleIconFile</key>
+    <string>StoreGate.icns</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
