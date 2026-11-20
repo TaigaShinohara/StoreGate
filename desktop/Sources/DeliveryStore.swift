@@ -7,6 +7,7 @@ final class DeliveryStore: ObservableObject {
     @Published private(set) var loadProblem: String?
     @Published private(set) var saveProblem: String?
     @Published private(set) var hasBackup = false
+    @Published private(set) var recoveryCopy: URL?
     private var pending: DeliveryWorkspace?
     private let url: URL
 
@@ -19,6 +20,8 @@ final class DeliveryStore: ObservableObject {
         do {
             workspace = try .read(url)
             loadProblem = nil
+        } catch DeliveryWorkspace.WriteError.primaryMissing {
+            loadProblem = "案件ファイルが見つかりません。保存先とバックアップを確認してください。"
         } catch {
             loadProblem = "案件ファイルを読み込めません。もう一度読み込むか、直前に保存した控えから復旧できます。元のファイルはそのままです。"
         }
@@ -67,6 +70,29 @@ final class DeliveryStore: ObservableObject {
     func revealStorage() {
         let directory = url.deletingLastPathComponent()
         NSWorkspace.shared.activateFileViewerSelecting([FileManager.default.fileExists(atPath: url.path) ? url : directory])
+    }
+
+    func revealRecoveryCopy() {
+        if let recoveryCopy { NSWorkspace.shared.activateFileViewerSelecting([recoveryCopy]) }
+    }
+
+    func dismissRecoveryCopy() { recoveryCopy = nil }
+
+    @discardableResult
+    func preservePendingAndReload() -> Bool {
+        guard let pending else { return true }
+        let copy = url.appendingPathExtension("pending-\(UUID().uuidString).json")
+        do {
+            try JSONEncoder().encode(pending).write(to: copy, options: .atomic)
+            self.pending = nil
+            saveProblem = nil
+            recoveryCopy = copy
+            reload()
+            return true
+        } catch {
+            saveProblem = "未保存の変更を控えに保存できませんでした。入力は保持しています。保存先の空き容量とアクセスを確認してください。"
+            return false
+        }
     }
 
     func select(_ id: UUID?) {
@@ -121,6 +147,8 @@ final class DeliveryStore: ObservableObject {
             if pending == nil { pending = value }
             if case DeliveryWorkspace.WriteError.conflict = error {
                 saveProblem = "別のStoreGateで新しい保存が見つかりました。上書きせず入力を保持しています。「保存を再試行」で競合しない変更を保存できます。"
+            } else if case DeliveryWorkspace.WriteError.primaryMissing = error {
+                saveProblem = "元の案件ファイルが見つからないため上書きしていません。保存先に元のファイルを戻してから再試行してください。"
             } else {
                 saveProblem = "変更を保存できませんでした。表示しているのは最後に保存できた内容です。「保存を再試行」で変更を保存できます。"
             }

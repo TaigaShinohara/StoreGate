@@ -141,8 +141,13 @@ struct StatusRecord: Codable, Equatable, Identifiable {
     let note: String
     let identity: BuildIdentity
     let date: Date
+    var archiveFingerprint: String?
 
-    enum CodingKeys: String, CodingKey { case id, state, note, identity, date }
+    enum CodingKeys: String, CodingKey { case id, state, note, identity, date, archiveFingerprint }
+
+    var recordsUploadedBuild: Bool {
+        [.processing, .submission, .reviewQueue, .inReview].contains(state)
+    }
 }
 
 struct PublicationProof: Codable, Equatable, Identifiable {
@@ -182,6 +187,13 @@ struct DeliveryProject: Codable, Equatable, Identifiable {
 
     var identity: BuildIdentity { .init(bundleID: bundleID, version: scope.version, build: scope.build) }
     var hasMatchingArchive: Bool { archive.map { $0.identity == identity && $0.signatureValid && $0.sandboxEnabled && $0.fingerprint != nil } ?? false }
+    var conflictsWithUploadedBuild: Bool {
+        guard let fingerprint = archive?.fingerprint else { return false }
+        return records.contains { record in
+            record.recordsUploadedBuild && record.identity == identity
+                && record.archiveFingerprint.map { $0 != fingerprint } == true
+        }
+    }
     var listingBlocked: Bool {
         guard let listingReport, !listingReport.blocked else { return true }
         return localeDrafts.keys.contains { localeReports[$0]?.blocked != false }
@@ -192,6 +204,7 @@ struct DeliveryProject: Codable, Equatable, Identifiable {
         if phase == .reviewQueue || phase == .inReview || phase == .processing || phase == .submission { return .review }
         if !scopeConfirmed { return .scope }
         if checks[.account] == nil, accountWait.isEmpty { return .account }
+        if conflictsWithUploadedBuild { return .archive }
         if phase == .revision, revisions.last?.areas.contains(.binary) == true, !hasMatchingArchive { return .archive }
         if listingBlocked || reviewNotes.isBlank || checks[.storefront] == nil { return .listing }
         if !hasMatchingArchive || checks[.distribution] == nil { return .archive }
@@ -220,7 +233,7 @@ struct DeliveryProject: Codable, Equatable, Identifiable {
         case .account: checks[.account] != nil && !storeAppID.isEmpty
         case .checks: openChecks.isEmpty && rulesReady
         case .listing: !listingBlocked && checks[.storefront] != nil && !reviewNotes.isBlank
-        case .archive: hasMatchingArchive && checks[.distribution] != nil
+        case .archive: hasMatchingArchive && !conflictsWithUploadedBuild && checks[.distribution] != nil
         case .review: [.reviewQueue, .inReview, .approved, .propagation, .published].contains(phase)
         case .publication: phase == .published
         }
@@ -334,6 +347,17 @@ struct DeliveryProject: Codable, Equatable, Identifiable {
     }
 
     mutating func invalidateBuild() {
+        // Older workspaces did not store the fingerprint with the upload event.
+        // Bind it while the archive that supported that observation is still known.
+        if [.processing, .submission, .reviewQueue, .inReview].contains(phase),
+           let archive, let fingerprint = archive.fingerprint {
+            for index in records.indices
+            where records[index].recordsUploadedBuild && records[index].archiveFingerprint == nil
+                && records[index].identity == archive.identity
+                && !records[index].note.hasPrefix("既存のストア状態を確認: ") {
+                records[index].archiveFingerprint = fingerprint
+            }
+        }
         archive = nil
         for key in [DeliveryCheck.source, .privacy, .runtime, .reviewAccess, .purchases, .distribution, .storefront] { checks[key] = nil }
         ruleProof = [:]
@@ -362,7 +386,9 @@ struct DeliveryProject: Codable, Equatable, Identifiable {
         default: return false
         }
         phase = target
-        records.append(StatusRecord(state: target, note: note, identity: observed, date: .now))
+        var event = StatusRecord(state: target, note: note, identity: observed, date: .now)
+        if event.recordsUploadedBuild { event.archiveFingerprint = archive?.fingerprint }
+        records.append(event)
         return true
     }
 
@@ -440,7 +466,10 @@ struct DeliveryWorkspace: Codable, Equatable {
 
     static func read(_ url: URL) throws -> Self {
         do { return try JSONDecoder().decode(Self.self, from: Data(contentsOf: url)) }
-        catch CocoaError.fileReadNoSuchFile { return Self() }
+        catch CocoaError.fileReadNoSuchFile {
+            if FileManager.default.fileExists(atPath: backupURL(url).path) { throw WriteError.primaryMissing }
+            return Self()
+        }
     }
 
     private static func backupURL(_ url: URL) -> URL { url.appendingPathExtension("previous") }
@@ -450,7 +479,7 @@ struct DeliveryWorkspace: Codable, Equatable {
         return (try? JSONDecoder().decode(Self.self, from: data)) != nil
     }
 
-    enum WriteError: Error { case lockUnavailable, conflict }
+    enum WriteError: Error { case lockUnavailable, conflict, primaryMissing }
 
     private static func locked<T>(_ url: URL, perform: () throws -> T) throws -> T {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -468,8 +497,9 @@ struct DeliveryWorkspace: Codable, Equatable {
                 let previousWorkspace = try JSONDecoder().decode(Self.self, from: previous)
                 if checkRevision, previousWorkspace.savedAt != previousSave { throw WriteError.conflict }
                 try previous.write(to: Self.backupURL(url), options: .atomic)
-            } else if checkRevision && previousSave != nil {
-                throw WriteError.conflict
+            } else {
+                if FileManager.default.fileExists(atPath: Self.backupURL(url).path) { throw WriteError.primaryMissing }
+                if checkRevision && previousSave != nil { throw WriteError.conflict }
             }
             try JSONEncoder().encode(self).write(to: url, options: .atomic)
         }

@@ -84,6 +84,7 @@ final class ReleaseStore: ObservableObject {
 
 @main
 struct StoreGateApp: App {
+    @NSApplicationDelegateAdaptor(DeliveryApplicationDelegate.self) private var applicationDelegate
     @StateObject private var sample = ReleaseStore(
         stateURL: URL.applicationSupportDirectory
             .appendingPathComponent("StoreGate Prototype", isDirectory: true)
@@ -96,6 +97,7 @@ struct StoreGateApp: App {
             StoreGateEntry(delivery: delivery, sample: sample)
                 .frame(minWidth: 820, minHeight: 580)
                 .tint(.storeGate)
+                .onAppear { applicationDelegate.store = delivery }
         }
         .defaultSize(width: 980, height: 690)
     }
@@ -105,6 +107,24 @@ struct StoreGateApp: App {
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? URL.applicationSupportDirectory.appendingPathComponent("StoreGate", isDirectory: true)
         return directory.appendingPathComponent("delivery-workspace.json")
+    }
+}
+
+@MainActor
+final class DeliveryApplicationDelegate: NSObject, NSApplicationDelegate {
+    weak var store: DeliveryStore?
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let store, store.saveProblem != nil else { return .terminateNow }
+        let alert = NSAlert()
+        alert.messageText = "保存できていない変更があります"
+        alert.informativeText = "終了する場合は、未保存の内容を別ファイルに保管します。保管できない場合は作業に戻ります。"
+        alert.addButton(withTitle: "作業に戻る")
+        alert.addButton(withTitle: "控えを保存して終了")
+        guard alert.runModal() == .alertSecondButtonReturn, store.preservePendingAndReload() else {
+            return .terminateCancel
+        }
+        return .terminateNow
     }
 }
 

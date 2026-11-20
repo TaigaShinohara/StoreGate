@@ -61,6 +61,18 @@ struct WorkspaceShell: View {
                 accessibilityFocus = .saveProblem
             }
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if store.recoveryCopy != nil {
+                HStack {
+                    Label("未保存の変更は別ファイルに保管しました。", systemImage: "doc.on.doc")
+                    Spacer()
+                    Button("控えをFinderで表示") { store.revealRecoveryCopy() }
+                    Button("閉じる") { store.dismissRecoveryCopy() }
+                }
+                .padding(12)
+                .background(.regularMaterial)
+            }
+        }
     }
 
     private func focusProjectList() {
@@ -218,10 +230,13 @@ struct WorkspaceShell: View {
                 Text(problem).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
-            Button("保存を再試行") { store.retrySave() }
-                .buttonStyle(.borderedProminent)
-            Button("保存先をFinderで開く") { store.revealStorage() }
-                .buttonStyle(.link)
+            VStack(alignment: .trailing, spacing: 7) {
+                Button("保存を再試行") { store.retrySave() }
+                    .buttonStyle(.borderedProminent)
+                Button("変更を控えに保存して読み直す") { store.preservePendingAndReload() }
+                Button("保存先をFinderで開く") { store.revealStorage() }
+                    .buttonStyle(.link)
+            }
         }
         .padding(14)
         .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))

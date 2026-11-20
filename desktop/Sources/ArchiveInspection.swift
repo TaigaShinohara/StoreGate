@@ -1,4 +1,5 @@
 import CoreFoundation
+import Darwin
 import Foundation
 
 struct ArchiveInspection: Codable, Equatable, Sendable {
@@ -21,6 +22,7 @@ struct ArchiveInspection: Codable, Equatable, Sendable {
     }
 
     private static let scope = "このアーカイブをローカルで照合しました。Mac App Store用の署名資格、アップロードしたビルド、実行時の動作は別途確認してください。"
+    private static let plistLimit = 4 * 1024 * 1024
 
     private static func inspectLocally(_ url: URL) throws -> Self {
         try Task.checkCancellation()
@@ -57,13 +59,14 @@ struct ArchiveInspection: Codable, Equatable, Sendable {
         let executable = executableDirectory.appendingPathComponent(executableName)
         try requireType(.typeRegular, at: executable)
 
-        let verification = try run("/usr/bin/codesign", ["--verify", "--strict", "--deep", app.path], includeErrors: true)
+        let deadline = DispatchTime.now() + .seconds(60)
+        let verification = try run("/usr/bin/codesign", ["--verify", "--strict", "--deep", app.path], includeErrors: true, deadline: deadline)
         let signatureValid = verification.status == 0
         let sandbox: (enabled: Bool, message: String)
         let fingerprint: String?
-        if signatureValid, let architectures = try architectures(in: executable) {
-            sandbox = try checkSandbox(in: app, architectures: architectures)
-            fingerprint = try signedFingerprint(in: app, architectures: architectures)
+        if signatureValid, let architectures = try architectures(in: executable, deadline: deadline) {
+            sandbox = try checkSandbox(in: app, architectures: architectures, deadline: deadline)
+            fingerprint = try signedFingerprint(in: app, architectures: architectures, deadline: deadline)
         } else if signatureValid {
             sandbox = (false, "署名の静的検証は通過しました。実行ファイルのアーキテクチャを判定できず、App Sandbox は未確認です。")
             fingerprint = nil
@@ -110,8 +113,13 @@ struct ArchiveInspection: Codable, Equatable, Sendable {
 
     private static func plist(at url: URL) throws -> [String: Any] {
         try requireType(.typeRegular, at: url)
-        guard let data = try? Data(contentsOf: url),
-              let result = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+        let file = try FileHandle(forReadingFrom: url)
+        defer { try? file.close() }
+        let data = try file.read(upToCount: plistLimit + 1) ?? Data()
+        guard data.count <= plistLimit else {
+            throw InspectionError(message: "Info.plist が大きすぎて検査できません。Xcodeで作成したアーカイブを選んでください。")
+        }
+        guard let result = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
             throw InspectionError(message: "\(url.deletingLastPathComponent().lastPathComponent) の Info.plist を読み取れませんでした。")
         }
         return result
@@ -132,16 +140,16 @@ struct ArchiveInspection: Codable, Equatable, Sendable {
         return value
     }
 
-    private static func architectures(in executable: URL) throws -> [String]? {
-        let result = try run("/usr/bin/lipo", ["-archs", executable.path])
+    private static func architectures(in executable: URL, deadline: DispatchTime) throws -> [String]? {
+        let result = try run("/usr/bin/lipo", ["-archs", executable.path], deadline: deadline)
         let names = String(decoding: result.output, as: UTF8.self).split(whereSeparator: \.isWhitespace).map(String.init)
         guard result.status == 0, !names.isEmpty, Set(names).count == names.count else { return nil }
         return names.sorted()
     }
 
-    private static func checkSandbox(in app: URL, architectures: [String]) throws -> (enabled: Bool, message: String) {
+    private static func checkSandbox(in app: URL, architectures: [String], deadline: DispatchTime) throws -> (enabled: Bool, message: String) {
         for architecture in architectures {
-            let entitlements = try run("/usr/bin/codesign", ["--display", "--architecture", architecture, "--entitlements", "-", "--xml", app.path])
+            let entitlements = try run("/usr/bin/codesign", ["--display", "--architecture", architecture, "--entitlements", "-", "--xml", app.path], deadline: deadline)
             guard entitlements.status == 0 else {
                 return (false, "署名の静的検証は通過しました。\(architecture) の署名済みエンタイトルメントを読み取れませんでした。")
             }
@@ -159,11 +167,11 @@ struct ArchiveInspection: Codable, Equatable, Sendable {
         return (true, "識別情報が一致し、署名の静的検証は通過しました。アプリ本体の全アーキテクチャの署名で App Sandbox が有効です。")
     }
 
-    private static func signedFingerprint(in app: URL, architectures: [String]) throws -> String? {
+    private static func signedFingerprint(in app: URL, architectures: [String], deadline: DispatchTime) throws -> String? {
         let prefix = "CDHash="
         var hashes: [String] = []
         for architecture in architectures {
-            let display = try run("/usr/bin/codesign", ["--display", "--architecture", architecture, "--verbose=4", app.path], includeErrors: true)
+            let display = try run("/usr/bin/codesign", ["--display", "--architecture", architecture, "--verbose=4", app.path], includeErrors: true, deadline: deadline)
             let lines = String(decoding: display.output, as: UTF8.self).split(whereSeparator: \.isNewline)
             let candidates = lines.filter { $0.hasPrefix(prefix) }
             guard display.status == 0, candidates.count == 1, let candidate = candidates.first else { return nil }
@@ -174,19 +182,59 @@ struct ArchiveInspection: Codable, Equatable, Sendable {
         return hashes.joined(separator: ";")
     }
 
-    private static func run(_ executable: String, _ arguments: [String], includeErrors: Bool = false) throws -> (status: Int32, output: Data) {
+    enum ToolError: LocalizedError {
+        case timedOut, tooMuchOutput
+
+        var errorDescription: String? {
+            switch self {
+            case .timedOut: "アーカイブの検査が時間内に終わりませんでした。アーカイブをMac内に置いて再検査してください。"
+            case .tooMuchOutput: "アーカイブ検査の出力が上限を超えました。Xcodeでアーカイブを確認してください。"
+            }
+        }
+    }
+
+    static func run(
+        _ executable: String, _ arguments: [String], includeErrors: Bool = false,
+        deadline: DispatchTime, limit: Int = 1024 * 1024
+    ) throws -> (status: Int32, output: Data) {
         try Task.checkCancellation()
+        guard DispatchTime.now() < deadline else { throw ToolError.timedOut }
+        let manager = FileManager.default
+        let folder = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try manager.createDirectory(at: folder, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? manager.removeItem(at: folder) }
+        let outputURL = folder.appendingPathComponent("output")
+        try Data().write(to: outputURL)
+        let output = try FileHandle(forUpdating: outputURL)
+        defer { try? output.close() }
         let process = Process()
-        let pipe = Pipe()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
-        process.standardOutput = pipe
-        process.standardError = includeErrors ? pipe : FileHandle.nullDevice
+        process.standardOutput = output
+        process.standardError = includeErrors ? output : FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+        let done = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in done.signal() }
         try process.run()
-        // Drain output before waiting so that a diagnostic cannot fill the pipe and block the tool.
-        let output = try pipe.fileHandleForReading.readToEnd() ?? Data()
-        process.waitUntilExit()
-        return (process.terminationStatus, output)
+
+        while done.wait(timeout: min(deadline, .now() + .milliseconds(50))) == .timedOut {
+            let bytes = try? outputURL.resourceValues(forKeys: [.fileSizeKey]).fileSize
+            let oversized = (bytes ?? 0) > limit
+            if oversized || Task.isCancelled || DispatchTime.now() >= deadline {
+                if process.isRunning { process.terminate() }
+                if done.wait(timeout: .now() + .milliseconds(250)) == .timedOut, process.isRunning {
+                    _ = kill(process.processIdentifier, SIGKILL)
+                    _ = done.wait(timeout: .now() + .milliseconds(250))
+                }
+                try Task.checkCancellation()
+                throw oversized ? ToolError.tooMuchOutput : ToolError.timedOut
+            }
+        }
+        try Task.checkCancellation()
+        try output.seek(toOffset: 0)
+        let data = try output.read(upToCount: limit + 1) ?? Data()
+        guard data.count <= limit else { throw ToolError.tooMuchOutput }
+        return (process.terminationStatus, data)
     }
 
     private struct InspectionError: LocalizedError {
