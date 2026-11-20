@@ -40,12 +40,12 @@ bash scripts/pull-metadata.sh apple      # pulls the live listing into ./metadat
 python3 scripts/metadata-audit.py ./metadata        # audits name, subtitle, keywords, description, URLs
 python3 scripts/metadata-audit.py ./metadata --propose   # writes suggested fixes, source copy untouched
 python3 scripts/metadata-audit.py ./metadata/android --platform google   # Google Play limits and rules
-python3 scripts/release-audit.py /path/to/app --metadata ./metadata     # full gate, exit 0 clear, 2 blocked, 3 incomplete
+python3 scripts/release-audit.py /path/to/app --metadata ./metadata     # static report, exit 2 blocked, 3 manual verification required
 ```
 
 The metadata audit checks character limits, other platform mentions, future functionality, negative Apple sentiment, profanity, ranking and price claims, keyword formatting, missing privacy policy and subscription terms, China storefront AI references, and malformed URLs (pass `--check-urls` to also test that each URL loads). It audits every locale folder on its own, filled from a fastlane `default/` folder and parent folders like fastlane does, and names the locale in each finding. It flags a URL that is not a real http or https address, an Apple listing with no support URL, a Google listing with no contact email, and a subscription with no real Terms or EULA link. Run it, then re run it after applying fixes. That is the detect, propose, re validate loop.
 
-The release audit blocks on any critical or high finding with exit 2. It exits 3 when a scan failed or the listing was not audited, so pass `--metadata` with your pulled listing.
+The release audit blocks on any critical or high finding with exit 2. Otherwise it exits 3: it does not receive evidence for runtime, console or legal checks and cannot approve submission. The report separates static findings, scan problems and manual verification. Pass `--metadata` with the full pulled listing; missing required fields do not pass. Re-running the scanners does not complete manual checks. Use the checklist to record them for the applicable platforms, features and regions, with a reason for each not-applicable item. Fleet Sweep is an optional record of scope and owner actions, not a complete compliance certification.
 
 For monitoring evolving developer requirements, also run the Apple Developer requirements monitor. This tracks 25 key categories against active developer news/announcements and maps updates directly to repository impact:
 
@@ -120,4 +120,6 @@ If time is short, verify these two first, because they cause the majority of rej
 
 ## Output contract
 
-The audit ends with a ranked findings table and a clear verdict. Clear to submit, or blocked with a numbered fix list. Never report clear while a critical finding stands.
+The audit ends with a ranked findings table and a verdict. BLOCKED takes priority while any critical or high finding stands. Keep missing evidence and scan problems visible even when blockers exist. Otherwise, missing required scans, a missing or partial listing, or unverified applicable checklist items mean INCOMPLETE. Name the remaining work and its verification method.
+
+A code scan's CLEAR only means no critical findings in that scan. Report clear to submit only after all applicable checklist items have current evidence; record a reason for every not-applicable item. Missing findings, silence and the static report do not supply that evidence. A single app can use the checklist directly; Fleet Sweep is optional and its READY verdict covers only its recorded scope and owner inputs.

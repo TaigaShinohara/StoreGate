@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
 """Release readiness audit. Usage. release-audit.py <app-dir> [--metadata <pulled-listing-dir>]
-Exit 0 clear, 2 blocked on a critical or high finding, 3 incomplete scan, 1 bad input."""
+Exit 2 blocked on a critical or high finding, 3 incomplete (including manual review), 1 bad input.
+This report does not import manual evidence and cannot certify a release as ready."""
 
 import os
 import sys
 import subprocess
 import json
 import re
+import html
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GUARD_NAME = "storegate-guard.sh"
 BLOCKING = ("critical", "high")
 LISTING_HINT = "Store listing not audited. Pull it with scripts/pull-metadata.sh, then pass --metadata <dir>."
+MANUAL_REVIEW_HINT = (
+    "Manual evidence is not imported by this report. Re-running scanners cannot complete manual review. "
+    "For a single app, record applicable checks and evidence in docs/PRE-SUBMISSION-CHECKLIST.md; "
+    "Fleet Sweep is an optional record of owner actions and attestations, not a replacement for verifying them."
+)
 
 # 13 Required areas
 REQUIRED_AREAS = [
@@ -45,6 +52,23 @@ RECOMMENDED_REVIEWERS = {
     "SDK compatibility": "Lead Mobile Developer, Architecture Review Board",
     "Deprecated APIs": "Lead Developer, Tech Debt/Platform Team",
     "Platform announcements": "Lead Developer, Mobile Release Manager",
+}
+
+# These are scope questions and evidence requests, not additional automated checks.
+MANUAL_CHECKS = {
+    "Apple requirements": ("Apple specific", "For an iOS release, verify the submitted build on a real device, review access, age-rating answers, export declarations, and App Store Connect account state."),
+    "Google Play requirements": ("Google Play specific", "For an Android release, verify the submitted build on a real device, Play Console declarations, tester/account requirements, and the release track."),
+    "Web requirements": ("Platform mechanics gate (both stores, if the item applies)", "Confirm whether web or wrapped web flows apply; exercise those flows in the released product and record the applicable platform checks."),
+    "Privacy": ("Privacy and data", "Compare actual data collection and SDK behavior with consent, the privacy policy, Apple privacy labels and Play Data Safety for the platforms shipped."),
+    "Security": ("Mobile Security and Best Practices", "Review the release configuration, transport, authentication, secrets and data handling against the shipped build."),
+    "Accessibility": ("Platform mechanics gate (both stores, if the item applies)", "Test applicable accessibility behavior on devices, including screen readers, text scaling and contrast; record results and relevant legal scope."),
+    "AI regulations": ("EU specific (legal layer, if the app reaches EU users)", "Establish AI features and distribution regions; verify applicable consent, AI notices, content safeguards and age restrictions in the product."),
+    "Store metadata": ("Metadata and listing", "Compare every submitted locale, screenshot, preview, URL and claim with the actual build; URL reachability needs --check-urls or a documented manual check."),
+    "Permissions": ("Privacy and data", "Exercise permission requests on devices and confirm each declared permission and purpose string matches a necessary user-facing feature."),
+    "Legal documentation": ("EU specific (legal layer, if the app reaches EU users)", "Establish distribution regions, audience and product features; verify applicable legal documents, trader/child-privacy declarations, terms and export obligations, including Global specific checks."),
+    "SDK compatibility": ("Platform mechanics gate (both stores, if the item applies)", "Confirm applicable SDK, billing, framework and privacy-manifest requirements against the dependencies and behavior of the built release."),
+    "Deprecated APIs": ("Platform mechanics gate (both stores, if the item applies)", "Review build diagnostics and dependencies for deprecated or prohibited APIs that static source scanning may not see."),
+    "Platform announcements": ("Account and program readiness (added September 2026)", "Check current official platform notices and console/account requirements for the platforms and release date in scope."),
 }
 
 # Manual mapping of specific patterns to areas
@@ -109,6 +133,7 @@ MAP_PATTERNS_TO_AREAS = {
     "BOTH-INVALID-METADATA-URL": ["Store metadata"],
     "APPLE-MISSING-SUPPORT-URL": ["Apple requirements", "Store metadata"],
     "GOOGLE-MISSING-CONTACT-EMAIL": ["Google Play requirements", "Store metadata"],
+    "BOTH-MISSING-REQUIRED-METADATA": ["Store metadata"],
 }
 
 
@@ -143,7 +168,7 @@ def scan_problems(name, code, out, err, ok_codes=(0, 2)):
     text = (out or "") + "\n" + (err or "")
     if code not in ok_codes:
         problems.append(f"{name} exited {code}")
-    for marker in ("NOT CHECKED", "Nothing was audited"):
+    for marker in ("NOT CHECKED", "Nothing was audited", "Coverage. incomplete", "Partial field audit"):
         if marker in text:
             line = next((ln.strip() for ln in text.splitlines() if marker in ln), marker)
             problems.append(f"{name} did not check everything. {line}")
@@ -156,14 +181,10 @@ def tail(text, n=8):
 
 
 def decide_status(findings, problems):
-    """Overall status and exit code. A failed or partial scan never passes, a high finding blocks."""
-    if problems:
-        return "INCOMPLETE", 3
+    """Blockers take priority; manual evidence remains unverified even after complete scans."""
     if any(f["severity"] in BLOCKING for f in findings):
         return "BLOCKED", 2
-    if findings:
-        return "ADVISORY", 0
-    return "PASSED", 0
+    return "INCOMPLETE", 3
 
 
 def run_command(args, cwd=ROOT):
@@ -445,11 +466,11 @@ def main():
         problems.append(LISTING_HINT)
     else:
         problems += scan_problems("metadata audit", meta_code, meta_out, meta_err)
-    if guard_code == 2 and not any(f["severity"] == "critical" for f in parse_findings(guard_out)):
-        problems.append("compliance guard exited 2 but reported no critical finding")
+    if guard_code == 2 and not any(f["severity"] in BLOCKING for f in parse_findings(guard_out)):
+        problems.append("compliance guard exited 2 but reported no critical or high finding")
     if problems:
         print("")
-        print("Scan problems. The release cannot be approved until every scan completes.")
+        print("Scan problems. These checks remain incomplete even when a finding also blocks the release.")
         for p in problems:
             print(f"  - {p}")
         for name, out, err in (("compliance guard", guard_out, guard_err), ("metadata audit", meta_out, meta_err)):
@@ -468,6 +489,7 @@ def main():
 
 def parse_findings(all_scanner_stdout):
     findings = []
+    seen = set()
     lines = all_scanner_stdout.splitlines()
     i = 0
     while i < len(lines):
@@ -486,27 +508,53 @@ def parse_findings(all_scanner_stdout):
         if match:
             sev = match.group(1).lower()
             pid = match.group(2)
-            title = match.group(3).strip()
-            # Trim trailing (field) suffix in case of metadata-audit format
-            title = re.sub(r"\s*\([^)]+\)$", "", title)
-
-            fix = ""
-            if i + 1 < len(lines) and re.match(r"^\s*file\.\s", lines[i + 1]):
-                i += 1
-            if i + 1 < len(lines):
-                next_line = lines[i + 1]
-                fix_match = re.match(r"^\s*fix\.\s+(.+)$", next_line, re.IGNORECASE)
-                if fix_match:
-                    fix = fix_match.group(1).strip()
-                    i += 1
-
-            # Avoid duplicate findings
-            if not any(f["id"] == pid for f in findings):
-                findings.append(
-                    {"id": pid, "severity": sev, "title": title, "fix": fix}
-                )
+            header = match.group(3).strip()
+            metadata = re.fullmatch(r"\(([^,]+),\s*(.+)\)", header)
+            field, locale = (metadata.group(1).strip(), metadata.group(2).strip()) if metadata else ("", "")
+            message = [] if metadata else [header]
+            fix, file = [], []
+            # Both scanners indent details. Metadata puts its message between the
+            # header and fix; guard may put a file there. Keep every part.
+            j = i + 1
+            current = message
+            while j < len(lines) and lines[j][:1].isspace():
+                detail = lines[j].strip()
+                if re.match(r"\[(CRITICAL|HIGH|MEDIUM|LOW)\]\s", detail, re.IGNORECASE):
+                    break
+                tagged = re.match(r"(file|fix)\.\s*(.*)$", detail, re.IGNORECASE)
+                if tagged:
+                    current = file if tagged.group(1).lower() == "file" else fix
+                    current.append(tagged.group(2))
+                else:
+                    current.append(detail)
+                j += 1
+            text = "\n".join(message)
+            finding = {
+                "id": pid, "severity": sev, "title": text, "message": text,
+                "fix": "\n".join(fix), "field": field, "locale": locale, "file": "\n".join(file),
+            }
+            # Only identical occurrences are duplicates. The same rule in another
+            # file, locale, field, or with another message still needs remediation.
+            key = tuple(finding[k] for k in ("id", "severity", "message", "fix", "field", "locale", "file"))
+            if key not in seen:
+                seen.add(key)
+                findings.append(finding)
+            i = j - 1
         i += 1
-    return findings
+    order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    return sorted(findings, key=lambda f: order[f["severity"]])
+
+
+def markdown_cell(value):
+    """Keep untrusted scanner text inside one Markdown table cell."""
+    text = str("" if value is None else value).replace("\r\n", "\n").replace("\r", "\n")
+    return html.escape(text, quote=False).replace("\\", "\\\\").replace("|", "\\|").replace("\n", "<br>")
+
+
+def static_status(findings):
+    if any(f["severity"] in BLOCKING for f in findings):
+        return "BLOCKED"
+    return "ADVISORY" if findings else "NO_STATIC_FINDINGS"
 
 
 def compile_report(target_dir, findings, problems, patterns_dict, affected_files_map):
@@ -533,45 +581,40 @@ def compile_report(target_dir, findings, problems, patterns_dict, affected_files
     report_lines.append("")
 
     report_lines.append("## Executive Summary")
-    if problems:
-        report_lines.append(
-            "The audit is INCOMPLETE. One or more scans failed or did not check the app, so the release cannot be approved. Fix the scan problems below and run the audit again."
-        )
-        report_lines.append("")
-        report_lines.append("## Scan Problems")
-        for p in problems:
-            report_lines.append(f"- {p}")
-    elif has_blocking:
+    if has_blocking:
         report_lines.append(
             "The release is currently BLOCKED due to one or more critical or high compliance issues that must be resolved before submitting to the platforms."
         )
-    elif findings:
-        report_lines.append(
-            "The release is ready but has outstanding non-critical advisory risks. Review the required actions and consult the recommended reviewers before finalizing the release."
-        )
     else:
         report_lines.append(
-            "The release has successfully passed all compliance audits with zero outstanding risks. Ready for deployment."
+            "The audit is INCOMPLETE. No critical or high finding was reported, but manual review evidence remains unverified. This scanner summary cannot approve submission."
         )
+    report_lines.append("")
+    report_lines.append(MANUAL_REVIEW_HINT)
+    report_lines.append("")
+    report_lines.append("## Incomplete Checks")
+    report_lines.append("")
+    if problems:
+        for p in problems:
+            report_lines.append(f"- {markdown_cell(p)}")
+    else:
+        report_lines.append("- Automated scans reported no execution or coverage problems. This does not verify manual evidence.")
+    report_lines.append("- Manual review: REVIEW_REQUIRED for applicable areas. Determine scope from the checklist; record evidence or a reason an item does not apply. Applicability has not been established by this report.")
     report_lines.append("")
 
     report_lines.append("## Compliance Summary Table")
     report_lines.append("")
-    report_lines.append("| Area | Status | Risks Found | Recommended Reviewers |")
-    report_lines.append("| --- | --- | --- | --- |")
+    report_lines.append("Static results describe only reported findings. If a scan was incomplete, absence of findings provides no coverage assurance. Manual review is tracked separately below.")
+    report_lines.append("")
+    report_lines.append("| Area | Static Results | Manual Review | Risks Found | Recommended Reviewers |")
+    report_lines.append("| --- | --- | --- | --- | --- |")
 
     for area in REQUIRED_AREAS:
-        area_status = "PASSED"
         area_f = area_findings[area]
-        if area_f:
-            if any(af["severity"] in BLOCKING for af in area_f):
-                area_status = "BLOCKED"
-            else:
-                area_status = "ADVISORY"
-
         num_risks = len(area_f)
         reviewers = RECOMMENDED_REVIEWERS.get(area, "Lead Developer")
-        report_lines.append(f"| {area} | {area_status} | {num_risks} | {reviewers} |")
+        cells = (area, static_status(area_f), "REVIEW_REQUIRED", num_risks, reviewers)
+        report_lines.append("| " + " | ".join(markdown_cell(c) for c in cells) + " |")
     report_lines.append("")
 
     report_lines.append("## Detailed Compliance Analysis")
@@ -579,48 +622,59 @@ def compile_report(target_dir, findings, problems, patterns_dict, affected_files
 
     for idx, area in enumerate(REQUIRED_AREAS, 1):
         area_f = area_findings[area]
-        area_status = "PASSED"
-        if area_f:
-            if any(af["severity"] in BLOCKING for af in area_f):
-                area_status = "BLOCKED"
-            else:
-                area_status = "ADVISORY"
 
         report_lines.append(f"### {idx}. {area}")
-        report_lines.append(f"- Status: {area_status}")
+        report_lines.append(f"- Static results: {static_status(area_f)}")
+        report_lines.append("- Manual review: REVIEW_REQUIRED (confirm applicability and record evidence or a reason the check does not apply).")
         report_lines.append(
             f"- Recommended Reviewers: {RECOMMENDED_REVIEWERS.get(area, 'Lead Developer')}"
         )
+        section, action = MANUAL_CHECKS[area]
+        checklist = os.path.join(ROOT, "docs", "PRE-SUBMISSION-CHECKLIST.md")
+        report_lines.append(f"- Next check: {action}")
+        report_lines.append(f"- Checklist: [docs/PRE-SUBMISSION-CHECKLIST.md](<{checklist}>) — {section}.")
         report_lines.append("")
 
         if not area_f:
-            report_lines.append("No outstanding risks found for this area.")
+            report_lines.append("No static findings were reported for this area; manual checks and applicability remain unverified.")
             report_lines.append("")
             continue
 
         report_lines.append(
-            "| Finding ID | Severity | Description | Required Action | Affected Files |"
+            "| Finding ID | Severity | Description | Required Action | Field | Locale | Affected Files |"
         )
-        report_lines.append("| --- | --- | --- | --- | --- |")
+        report_lines.append("| --- | --- | --- | --- | --- | --- | --- |")
 
         for af in area_f:
             pid = af["id"]
             sev = af["severity"].upper()
-            title = af["title"]
+            title = af.get("message") or af.get("title", "")
             fix = af["fix"] or "Refer to guidelines for remediation."
 
-            # Retrieve programmatically scanned affected files
-            aff_files = affected_files_map.get(pid, [])
+            # A scanner's occurrence location is authoritative. The heuristic
+            # fallback supplies context only when the scanner gave no location.
+            aff_files = [af["file"]] if af.get("file") else affected_files_map.get(pid, [])
+            if not af.get("file") and (af.get("field") or af.get("locale")):
+                aff_files = []
             if not aff_files:
                 files_str = "None detected (Config/Listing check)"
             else:
                 # Limit to first 5 paths to keep the table clean
-                files_str = "<br>".join(aff_files[:5])
+                files_str = "\n".join(aff_files[:5])
                 if len(aff_files) > 5:
-                    files_str += f"<br>... and {len(aff_files) - 5} more files"
+                    files_str += f"\n... and {len(aff_files) - 5} more files"
 
-            report_lines.append(f"| {pid} | {sev} | {title} | {fix} | {files_str} |")
+            cells = (pid, sev, title, fix, af.get("field", ""), af.get("locale", ""), files_str)
+            report_lines.append("| " + " | ".join(markdown_cell(c) for c in cells) + " |")
         report_lines.append("")
+
+    report_lines.append("## Complete the Manual Review")
+    report_lines.append("")
+    report_lines.append(MANUAL_REVIEW_HINT)
+    report_lines.append("")
+    fleet_docs = os.path.join(ROOT, "docs", "FLEET-SWEEP.md")
+    report_lines.append(f"See [docs/FLEET-SWEEP.md](<{fleet_docs}>) and templates/fleet.example.json if a fleet record is useful. Replace sample values with actual app scope, owners and verified evidence, then run python3 scripts/fleet-sweep.py fleet.json. Its result reflects its configured checks and declarations; this report does not import or verify that evidence.")
+    report_lines.append("After fixing static findings or missing inputs, re-run this audit. A single-app checklist review can be completed separately; the automated report will still return INCOMPLETE without a blocker because it has no manual-evidence import.")
 
     # Write report file into the audited target, not this playbook's own root
     report_path = os.path.join(target_dir, "RELEASE-READINESS-REPORT.md")
@@ -633,12 +687,13 @@ def compile_report(target_dir, findings, problems, patterns_dict, affected_files
     )
     print(f"Overall Status: {overall_status}")
 
-    if overall_status == "INCOMPLETE":
-        print("Release is NOT APPROVED. A scan failed or did not check the app, see Scan problems above.")
-    elif overall_status == "BLOCKED":
+    if overall_status == "BLOCKED":
         print("Release is BLOCKED. Resolve the critical and high issues.")
     else:
-        print("Release is CLEAR TO SUBMIT.")
+        print("Release is NOT APPROVED by this report. Manual review remains required; see Incomplete Checks in the report.")
+    if problems:
+        print("Incomplete checks also remain. See Incomplete Checks in the report.")
+    print(MANUAL_REVIEW_HINT)
     return exit_code
 
 

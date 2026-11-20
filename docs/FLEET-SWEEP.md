@@ -4,7 +4,7 @@ You ship more than one app. Fleet Sweep runs the guard over every one of them an
 
 ## What you get
 
-- One verdict for the whole fleet. `READY`, `READY_WITH_ACTIONS`, `NOT_CHECKED`, or `BLOCKED`, worst app wins. Exit codes 0, 3, 1 and 2, so only a truly ready fleet exits 0.
+- One verdict for the recorded fleet. `READY`, `READY_WITH_ACTIONS`, `NOT_CHECKED`, or `BLOCKED`, worst app wins. Exit codes 0, 3, 1 and 2. Unresolved critical or high findings block the release. `READY` covers only the declared scope, recorded owner answers and checked register requirements; it does not certify every submission requirement.
 - No silent passes. The guard prints a `Coverage.` line before every exit naming what it scanned. A partial scan, a platform you declared but the guard did not find, a timeout, a missing or doubled summary, counts that do not match the findings, or an exit code that contradicts them is `NOT_CHECKED`, never `READY`. A waiver can never turn a partial scan into a pass.
 - Owner actions in the same report. Account and console steps the scan cannot see (agreements, privacy answers, Data Safety, a test on a real device) sit beside the code findings. A step set to `false`, or no readiness list at all, stays open.
 - Waivers that expire and cover one occurrence. A waiver names the app, the finding ID, its severity and its file, so it never hides the same rule firing somewhere new or at a higher severity. It needs a reason, evidence, a reviewer, and an expiry no more than 180 days out. Two waivers for the same occurrence cancel each other. An expired, incomplete, duplicated, or stale waiver is named in the report and the finding returns.
@@ -19,7 +19,7 @@ You ship more than one app. Fleet Sweep runs the guard over every one of them an
    cp templates/fleet.example.json fleet.json
    ```
 
-   Each `name` must be unique. `path` may use `~` and environment variables. `platforms` lists what you ship (`ios`, `android`, `web`), and the sweep checks the guard actually found each one. `readiness` maps each account step to `true` or `false`. Leave it out and the app reports it as an open owner action.
+   Each `name` must be unique. `path` may use `~` and environment variables. `platforms` lists what you ship (`ios`, `android`, `web`), and the sweep checks the guard actually found each one. `readiness` maps each account step to `true` or `false`. The template starts every step at `false` and has no attestations. Set a step to `true` only after checking it, and add attestations using your own dated evidence. Leave readiness out and the app reports it as an open owner action. Do not copy another app's answers or sample evidence as confirmation for your app.
 2. Run the sweep.
 
    ```bash
@@ -47,4 +47,4 @@ Upload `fleet.sarif` with `github/codeql-action/upload-sarif` to see findings in
 
 ## What it does not do
 
-It does not change a single guard rule. The guard decides what is a finding. Fleet Sweep only gathers, applies waivers you signed, and refuses to call anything ready that it did not see checked.
+It does not change a single guard rule. The guard decides what is a finding; Fleet Sweep treats unresolved critical and high findings as blockers and applies only the reviewed waivers you supply. Owner answers and attestations still need to be true of the current app. Missing checklist items outside the recorded scope cannot be inferred from READY. Complete the applicable [pre-submission checklist](PRE-SUBMISSION-CHECKLIST.md) before submission. A single app can record those checks in the checklist without creating a fleet file.

@@ -360,7 +360,7 @@ def sweep_app(app, guard, waivers, today, timeout, register=None):
         )
 
     missing = [p for p in result["platforms"] if not covered[p]]
-    blocked = any(f["severity"] == "critical" for f in result["findings"]) or bool(result["register_blockers"])
+    blocked = any(f["severity"] in ("critical", "high") for f in result["findings"]) or bool(result["register_blockers"])
     if blocked:
         result["verdict"] = "BLOCKED"
     elif state != "complete":

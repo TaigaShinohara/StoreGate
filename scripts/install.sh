@@ -335,7 +335,7 @@ verify() {
     fi
   fi
   local missing="" p
-  for p in SKILL.md data/rejection-patterns.json data/regulatory-deadlines.json docs/PRE-SUBMISSION-CHECKLIST.md references scripts/deadline-checker.py scripts/validate-privacy-manifest.py templates .citation-allowlist; do
+  for p in SKILL.md data/rejection-patterns.json data/regulatory-deadlines.json docs/PRE-SUBMISSION-CHECKLIST.md references scripts/deadline-checker.py scripts/validate-privacy-manifest.py scripts/android-target-sdk.py templates .citation-allowlist; do
     [ -e "$SKILL/$p" ] || missing="$missing $p"
   done
   if [ -z "$missing" ]; then good "skill payload complete at $SHOWN/skills/app-store-compliance"; else fail "skill payload is missing.$missing"; fi
@@ -360,13 +360,29 @@ verify() {
         ( cd "$fx" && printf '{"tool_name":"PowerShell","tool_input":{"command":"fastlane deliver"}}' | env -u CLAUDE_PROJECT_DIR bash -c "$reg" >/dev/null 2>&1 ); rc=$?
         if [ "$rc" -eq 2 ]; then good "the registered hook command blocks a submit command run through PowerShell"; else fail "the registered hook command did not block a PowerShell submit command (exit $rc)"; fi
       fi
+      if have python3 -c pass; then
+        # No other critical risk can hide a missing or non-working manifest validator.
+        printf '<plist><dict><key>ITSAppUsesNonExemptEncryption</key><false/></dict></plist>' > "$fx/App/Info.plist"
+        printf 'import Foundation\nlet privacyPolicy = "https://example.com/privacy"\n' > "$fx/App/X.swift"
+        printf '<plist><dict><key>NSPrivacyTracking</key><false/><key>NSPrivacyCollectedDataTypes</key><array/><key>NSPrivacyAccessedAPITypes</key><array/></dict></plist>' > "$fx/App/PrivacyInfo.xcprivacy"
+        out="$( cd "$fx" && printf '{"tool_name":"Bash","tool_input":{"command":"fastlane deliver"}}' | env -u CLAUDE_PROJECT_DIR bash -c "$reg" 2>&1 )"; rc=$?
+        if [ "$rc" -eq 2 ] && printf '%s\n' "$out" | grep -q 'APPLE-MANIFEST-API-TYPES-EMPTY'; then
+          good "the registered hook blocks the validator-only privacy manifest fixture"
+        else
+          fail "the registered hook did not block and report the validator-only privacy manifest fixture (exit $rc, expected 2)"
+        fi
+      fi
     fi
     rm -rf "$fx"
   fi
-  have python3 -c pass || warn "python3 not found. The guard still runs, the deadline list and the privacy manifest validator are skipped."
+  have python3 -c pass || warn "python3 not found. Android target SDK resolution, privacy manifest validation and deadline checks were not verified."
   say ""
   if [ "$PROBLEMS" -eq 0 ]; then
-    say "Install verified."
+    if have python3 -c pass; then
+      say "Install verified."
+    else
+      say "Installed, but not fully verified. Install python3 and run doctor to verify Android target SDK resolution, privacy manifest validation and deadline checks."
+    fi
     say "Check your app now.   bash $SHOWN/hooks/$GUARD_NAME /path/to/your/app"
     say "Inside Claude Code.   /storegate-audit"
     say "Restart Claude Code once so it loads the hook."
@@ -374,6 +390,21 @@ verify() {
   fi
   say "$PROBLEMS problem(s) above. Fix them, then run. bash $REPO/scripts/install.sh doctor"
   return 1
+}
+
+record_guard_owner() {
+  local canonical_guard registry_tmp
+  canonical_guard="$(cd "$CONF/hooks" && pwd -P)/$GUARD_NAME" || return 1
+  if [ -L "$SKILL/.guards" ] || { [ -e "$SKILL/.guards" ] && [ ! -f "$SKILL/.guards" ]; }; then
+    fail "cannot register the guard in $SKILL/.guards because it is not a private regular file. It was not changed."
+    return 1
+  fi
+  registry_tmp="$(mktemp "$SKILL/.asc-guards-XXXXXX")" || return 1
+  if [ -f "$SKILL/.guards" ]; then
+    awk -F '\t' -v path="$canonical_guard" '!(NF == 2 && $1 == "claude" && $2 == path)' "$SKILL/.guards" > "$registry_tmp" || { rm -f "$registry_tmp"; return 1; }
+  fi
+  printf 'claude\t%s\n' "$canonical_guard" >> "$registry_tmp"
+  mv "$registry_tmp" "$SKILL/.guards"
 }
 
 do_install() {
@@ -400,6 +431,7 @@ do_install() {
   done
   rm -rf "$SKILL/scripts/__pycache__"
   cp "$REPO/agent-os/commands/storegate-audit.md" "$CMD_FILE"
+  record_guard_owner || { fail "could not register this guard with its nearby skill payload"; return 1; }
   good "files copied"
 
   settings_edit add; local rc=$?

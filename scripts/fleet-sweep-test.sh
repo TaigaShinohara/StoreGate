@@ -47,7 +47,7 @@ app clean 0 "$CLEAN"; fleet clean
 app blocked 2 "$CRIT"; fleet clean blocked
 [ "$(run)" = 2 ] && has "Fleet verdict. BLOCKED" && ok || bad "one blocked app blocks the fleet, exit 2"
 app highonly 0 "$HIGHONLY"; fleet highonly
-[ "$(run)" = 3 ] && has "READY_WITH_ACTIONS" && ok || bad "unresolved high exits 3, never 0"
+[ "$(run)" = 2 ] && has "BLOCKED" && ok || bad "unresolved high blocks the release, exit 2"
 has "fix. Remove NSAllowsArbitraryLoads" && has "file. ios/App/Info.plist" && ok || bad "every finding prints with file and fix"
 
 # Readiness. Unknown is never success.
@@ -93,7 +93,16 @@ fleet "clean:ios"; [ "$(run)" = 0 ] && ok || bad "declared platform that was sca
 
 # Waiver Ledger.
 fleet blocked; waiver "${W/APPNAME/blocked}"
-[ "$(run --waivers "$T/w.json")" = 3 ] && has "waived until 2027-01-01" && ok || bad "valid waiver sets aside the critical"
+[ "$(run --waivers "$T/w.json")" = 2 ] && has "waived until 2027-01-01" && has "Arbitrary loads allowed" && ok || bad "a valid critical waiver leaves the separate high blocker visible"
+HIGH_W='{"app":"blocked","finding_id":"H","severity":"high","reason":"reviewed false positive","evidence":"release configuration inspected","reviewed_by":"Mirza","expires":"2027-01-01"}'
+waiver "${W/APPNAME/blocked}" "$HIGH_W"
+[ "$(run --waivers "$T/w.json")" = 0 ] && has "Fleet verdict. READY" && ok || bad "reviewed waivers for both blockers allow the recorded scope to pass"
+fleet highonly
+waiver '{"app":"highonly","finding_id":"H","severity":"high","file":"ios/App/Info.plist","reason":"reviewed false positive","evidence":"release configuration inspected","reviewed_by":"Mirza","expires":"2027-01-01"}'
+[ "$(run --waivers "$T/w.json")" = 0 ] && has "Fleet verdict. READY" && ok || bad "a matching high waiver preserves the reviewed false-positive workflow"
+app highpartial 0 "  [HIGH] H  Arbitrary loads allowed\n\nSummary. critical=0 high=1 medium=0\n${INC}"
+fleet highpartial
+[ "$(run)" = 2 ] && has "scan was incomplete" && ok || bad "a high blocker and incomplete coverage are both reported"
 app twox 2 "  [CRITICAL] X  fixture\n      file. tests/fixture.plist\n  [CRITICAL] X  production\n      file. ios/App/Info.plist\n\nSummary. critical=2 high=0 medium=0\n${COV}"
 fleet twox; waiver "$(echo "${W/APPNAME/twox}" | sed 's#ios/App/Info.plist#tests/fixture.plist#')"
 [ "$(run --waivers "$T/w.json")" = 2 ] && has "production" && ok || bad "a waiver covers one occurrence, not every finding with that ID"

@@ -25,7 +25,9 @@ Every locale folder is audited on its own and each finding names its locale.
 A folder named android in the path is audited with the Google rules unless
 --platform is given.
 
-Exit codes: 0 clean or advisory, 1 the directory held nothing to audit, 2 a critical finding.
+Directory audits check required listing fields; explicit fields are a partial audit.
+Neither mode verifies submission readiness or manual checklist evidence.
+Exit codes: 0 no critical findings, 1 the directory held nothing to audit, 2 a critical finding.
 """
 
 import itertools
@@ -160,12 +162,26 @@ def lc(s):
     return (s or "").lower()
 
 
-def audit_fields(fields, check_urls=False, platform="apple"):
+def audit_fields(fields, check_urls=False, platform="apple", require_listing=False):
     findings = []
     apple = platform == "apple"
     name = fields.get("name", "")
     subtitle = fields.get("subtitle", "")
     keywords = fields.get("keywords", "")
+
+    # A directory represents a listing, while explicit fields may intentionally be partial.
+    if require_listing:
+        required = ("name", "description") if apple else ("name", "short_description", "description")
+        for field in required:
+            if not fields.get(field, "").strip():
+                add(
+                    findings,
+                    "high",
+                    "BOTH-MISSING-REQUIRED-METADATA",
+                    field,
+                    f"{field} is missing or empty; this directory cannot be audited as a complete {platform} listing",
+                    f"Pull the complete listing or add the real {field} value for this locale, then audit the directory again",
+                )
 
     # char limits
     for f, limit in (FIELD_LIMITS if apple else GOOGLE_FIELD_LIMITS).items():
@@ -493,7 +509,9 @@ def _fields_from(entries, aliases, conflicts=None):
             ]
         )
         for canon, v in pairs:
-            if not canon or not v:
+            # Keep recognized empty fields so an empty locale is not silently skipped
+            # or replaced by a parent's shared URLs during a directory audit.
+            if not canon:
                 continue
             name = os.path.basename(path)
             if canon in fields and fields[canon] != v:
@@ -662,11 +680,15 @@ def main():
 
     findings = []
     print("== Metadata Audit ==")
+    if d:
+        print("Scope. Full directory audit, including required listing fields for every locale.")
+    else:
+        print("Scope. Partial field audit. Full listing completeness and submission readiness were not assessed.")
     for label, plat, fields, clash in units:
         print(
             f"Locale {label} ({plat}). Fields audited. {', '.join(sorted(fields.keys()))}"
         )
-        unit = audit_fields(fields, check_urls=check_urls, platform=plat)
+        unit = audit_fields(fields, check_urls=check_urls, platform=plat, require_listing=bool(d))
         seen = {(f["severity"], f["rule"], f["field"], f["message"]) for f in unit}
         # Every combination of the conflicting values is audited, so no pairing across fields hides a rejection risk.
         options = {}
@@ -679,7 +701,7 @@ def main():
         for n in names:
             total *= len(options[n])
         for combo in itertools.islice(itertools.product(*(options[n] for n in names)), 1, 4096):
-            for f in audit_fields({**fields, **dict(zip(names, combo))}, check_urls=check_urls, platform=plat):
+            for f in audit_fields({**fields, **dict(zip(names, combo))}, check_urls=check_urls, platform=plat, require_listing=bool(d)):
                 key = (f["severity"], f["rule"], f["field"], f["message"])
                 if key not in seen:
                     seen.add(key)
@@ -707,11 +729,14 @@ def main():
 
     print("")
     if not findings:
-        print("Clean. No metadata rejection risks found.")
+        if d:
+            print("Clean. No static metadata rejection risks found. Manual verification remains required.")
+        else:
+            print("No rejection risks found in the supplied fields. This is a partial audit.")
     for f in findings:
         print(f"  [{f['severity'].upper()}] {f['rule']}  ({f['field']}, {f['locale']})")
-        print(f"      {f['message']}")
-        print(f"      fix. {f['fix']}")
+        print("      " + f["message"].replace("\n", "\n      "))
+        print("      fix. " + f["fix"].replace("\n", "\n      "))
     print("")
     print(f"Summary. critical={crit} high={high} medium={med} low={low}")
 

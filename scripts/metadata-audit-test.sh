@@ -234,5 +234,37 @@ printf 'Journal' > "$GN/en-US/name.txt"; printf 'https://j.test/privacy' > "$GN/
 OUT="$($AUDIT "$GN" 2>&1)"
 echo "$OUT" | grep -q 'BOTH-PLACEHOLDER' && ok "the global review notes are audited over a locale's notes" || bad "the global review notes are audited over a locale's notes"
 rm -rf "$GN"
+
+# Full directory audits require listing content; field-only audits remain partial.
+REQ="$(mktemp -d)"; mkdir -p "$REQ/en-US"
+printf '{"privacy_url":"https://j.test/privacy","support_url":"https://j.test/help"}' > "$REQ/en-US/listing.json"
+OUT="$($AUDIT "$REQ" 2>&1)"
+echo "$OUT" | grep -q 'BOTH-MISSING-REQUIRED-METADATA  (name, en-US)' && echo "$OUT" | grep -q 'BOTH-MISSING-REQUIRED-METADATA  (description, en-US)' && ! echo "$OUT" | grep -q '^Clean' && ok "URL-only directory reports missing name and description" || bad "URL-only directory reports missing name and description"
+# An empty locale must not vanish into parent URLs; every submitted locale is checked.
+mkdir -p "$REQ/fr-FR"
+printf '   \n' > "$REQ/fr-FR/name.txt"; printf '\n' > "$REQ/fr-FR/description.txt"
+printf '{"privacy_url":"https://j.test/privacy","support_url":"https://j.test/help"}' > "$REQ/shared.json"
+OUT="$($AUDIT "$REQ" 2>&1)"
+echo "$OUT" | grep -q 'BOTH-MISSING-REQUIRED-METADATA  (name, fr-FR)' && echo "$OUT" | grep -q 'BOTH-MISSING-REQUIRED-METADATA  (description, fr-FR)' && ok "empty locale fields remain a named incomplete listing" || bad "empty locale fields remain a named incomplete listing"
+printf 'Journal' > "$REQ/en-US/name.txt"
+printf 'Capture daily thoughts and organize them by date.' > "$REQ/en-US/description.txt"
+OUT="$($AUDIT "$REQ" 2>&1)"
+echo "$OUT" | grep 'BOTH-MISSING-REQUIRED-METADATA' | grep -q 'en-US' && bad "a complete locale is not blamed for another locale's missing fields" || ok "a complete locale is not blamed for another locale's missing fields"
+rm -rf "$REQ"
+
+GREQ="$(mktemp -d)"; mkdir -p "$GREQ/en-US"
+printf '{"privacy_url":"https://j.test/privacy","contact_email":"hi@j.test"}' > "$GREQ/en-US/listing.json"
+OUT="$($AUDIT "$GREQ" --platform google 2>&1)"
+if echo "$OUT" | grep -q 'BOTH-MISSING-REQUIRED-METADATA  (name, en-US)' && echo "$OUT" | grep -q 'BOTH-MISSING-REQUIRED-METADATA  (short_description, en-US)' && echo "$OUT" | grep -q 'BOTH-MISSING-REQUIRED-METADATA  (description, en-US)'; then ok "Google directory requires name, short description and full description"; else bad "Google directory requires name, short description and full description"; fi
+printf 'Journal' > "$GREQ/en-US/title.txt"
+printf 'Capture your day.' > "$GREQ/en-US/short_description.txt"
+printf 'Capture daily thoughts and organize them by date.' > "$GREQ/en-US/full_description.txt"
+OUT="$($AUDIT "$GREQ" --platform google 2>&1)"
+echo "$OUT" | grep -q '^Clean' && ! echo "$OUT" | grep -q 'MISSING-REQUIRED-METADATA' && ok "complete Google directory uses field aliases and passes static checks" || bad "complete Google directory uses field aliases and passes static checks"
+rm -rf "$GREQ"
+
+OUT="$($AUDIT --name Journal --privacy_url https://j.test/privacy --support_url https://j.test/help 2>&1)"
+echo "$OUT" | grep -q 'Partial field audit' && ! echo "$OUT" | grep -q 'MISSING-REQUIRED-METADATA\|^Clean' && ok "explicit fields remain a partial audit without new listing requirements" || bad "explicit fields remain a partial audit without new listing requirements"
+
 echo "metadata-audit-test: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
