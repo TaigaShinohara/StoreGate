@@ -2,6 +2,7 @@
 """Install the guard, skill and audit command into every supported AI coding tool other than Claude Code.
 Usage. install_harness.py <tool> [install|doctor|uninstall] [--dry-run] [--repo DIR]. Configs are merged, never replaced."""
 
+import hashlib
 import json
 import os
 import re
@@ -14,6 +15,19 @@ import time
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GUARD_NAME = "storegate-guard.sh"
 PAYLOAD_DIRS = ("docs", "data", "references", "templates", "scripts")
+REPO_PAYLOAD_MANIFEST = ".storegate-owned-files.json"
+MANIFEST_FIXTURE_RULE = "APPLE-MANIFEST-API-TYPES-EMPTY"
+REQUIRED_PAYLOAD = (
+    "SKILL.md",
+    "VERSION",
+    "data/rejection-patterns.json",
+    "data/regulatory-deadlines.json",
+    "docs/PRE-SUBMISSION-CHECKLIST.md",
+    "scripts/deadline-checker.py",
+    "scripts/validate-privacy-manifest.py",
+    "scripts/android-target-sdk.py",
+    ".citation-allowlist",
+)
 SUBMIT = "fast" + "lane deliver"
 PROBLEMS = []
 UNVERIFIED = []
@@ -840,6 +854,124 @@ def write_guards(guards):
     os.replace(tmp, os.path.join(sk, ".guards"))
 
 
+def repo_payload_dir(lay):
+    return os.path.join(lay["hooks"], "storegate")
+
+
+def payload_path(root, relative):
+    """Only paths inside this payload can be owned or removed, including through symlinks."""
+    if os.path.islink(root) or not isinstance(relative, str) or "\\" in relative:
+        return None
+    parts = relative.split("/")
+    if any(p in ("", ".", "..") for p in parts):
+        return None
+    if parts[0] not in PAYLOAD_DIRS and relative not in ("SKILL.md", "VERSION", ".citation-allowlist"):
+        return None
+    path = root
+    for part in parts:
+        path = os.path.join(path, part)
+        if os.path.islink(path):
+            return None
+    if os.path.commonpath((os.path.realpath(root), os.path.realpath(path))) != os.path.realpath(root):
+        return None
+    return path
+
+
+def file_digest(path):
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def read_repo_payload(root):
+    if os.path.islink(root) or os.path.islink(os.path.join(root, REPO_PAYLOAD_MANIFEST)):
+        return None
+    try:
+        with open(os.path.join(root, REPO_PAYLOAD_MANIFEST), encoding="utf-8") as f:
+            manifest = json.load(f)
+        files = manifest["files"]
+        if manifest.get("format") != 1 or not isinstance(files, dict) or not files:
+            return None
+        if any(not payload_path(root, p) or not isinstance(d, str) or not re.fullmatch(r"[0-9a-f]{64}", d)
+               for p, d in files.items()):
+            return None
+        return files
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def remove_owned_payload(root, files):
+    """Keep untracked files and local edits, and prune only parents of removed files."""
+    for relative, digest in files.items():
+        path = payload_path(root, relative)
+        if not path or not os.path.isfile(path) or os.path.islink(path):
+            continue
+        if file_digest(path) != digest:
+            note("keeping locally changed payload file " + shown(path))
+            continue
+        os.remove(path)
+        parent = os.path.dirname(path)
+        while parent != root:
+            try:
+                os.rmdir(parent)
+            except OSError:
+                break
+            parent = os.path.dirname(parent)
+
+
+def save_local_file(target):
+    fd, backup = tempfile.mkstemp(dir=os.path.dirname(target), prefix=os.path.basename(target) + ".bak-")
+    os.close(fd)
+    shutil.copy2(target, backup)
+    note("local file saved at " + shown(backup))
+
+
+def copy_preserving_local(source, target, owned_digest=None):
+    """Back up a collision or local edit before refreshing a distributed file."""
+    if os.path.exists(target):
+        current = file_digest(target)
+        if current != file_digest(source) and current != owned_digest:
+            save_local_file(target)
+    shutil.copy2(source, target)
+
+
+def copy_repo_payload(lay):
+    """Merge the private repository payload without replacing the user's directories."""
+    root = repo_payload_dir(lay)
+    if os.path.islink(root):
+        raise ValueError("private repository payload directory must not be a symlink: " + root)
+    manifest_path = os.path.join(root, REPO_PAYLOAD_MANIFEST)
+    if os.path.islink(manifest_path):
+        raise ValueError("repository payload ownership manifest must not be a symlink: " + manifest_path)
+    previous = read_repo_payload(root)
+    if previous is None and os.path.exists(manifest_path):
+        save_local_file(manifest_path)
+    previous = previous or {}
+    sources = {"SKILL.md": os.path.join(REPO, "agent-os", "skill", "SKILL.md")}
+    for name in ("VERSION", ".citation-allowlist"):
+        sources[name] = os.path.join(REPO, name)
+    for directory in PAYLOAD_DIRS:
+        for folder, dirs, names in os.walk(os.path.join(REPO, directory)):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            for name in names:
+                source = os.path.join(folder, name)
+                sources[os.path.relpath(source, REPO).replace(os.sep, "/")] = source
+    files = {}
+    for relative, source in sources.items():
+        target = payload_path(root, relative)
+        if not target or os.path.islink(target):
+            raise ValueError("repository payload path is not a private file: " + relative)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        copy_preserving_local(source, target, previous.get(relative))
+        files[relative] = file_digest(target)
+    remove_owned_payload(root, {p: d for p, d in previous.items() if p not in files})
+    # This is ownership bookkeeping, so a new install does not accumulate bookkeeping backups.
+    fd, tmp = tempfile.mkstemp(dir=root, prefix=".asc-payload-")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump({"format": 1, "files": files}, f, indent=2, sort_keys=True)
+        f.write("\n")
+    os.replace(tmp, manifest_path)
+
+
 def copy_payload(tool, lay, guard):
     if tool != "copilot-repo":
         sk = skill_dir()
@@ -863,14 +995,22 @@ def copy_payload(tool, lay, guard):
             )
         write_owners(read_owners() | {tool})
         write_guards(dict(read_guards(), **{guard: tool}))
+    else:
+        copy_repo_payload(lay)
     os.makedirs(lay["hooks"], exist_ok=True)
-    shutil.copy2(os.path.join(REPO, "agent-os", "hooks", GUARD_NAME), guard)
+    source = os.path.join(REPO, "agent-os", "hooks", GUARD_NAME)
+    if tool == "copilot-repo":
+        if os.path.islink(guard):
+            raise ValueError("repository guard must not be a symlink: " + guard)
+        copy_preserving_local(source, guard)
+    else:
+        shutil.copy2(source, guard)
     os.chmod(guard, 0o755)
     if lay["command"]:
         os.makedirs(os.path.dirname(lay["command"]), exist_ok=True)
         with open(lay["command"], "w", encoding="utf-8") as f:
             f.write(command_text(tool, guard))
-    ok("guard copied" if tool == "copilot-repo" else "guard, skill and command copied")
+    ok("guard and private repository payload copied" if tool == "copilot-repo" else "guard, skill and command copied")
 
 
 def payload_for(tool, style, command, cwd):
@@ -949,14 +1089,19 @@ def payload_for(tool, style, command, cwd):
 
 
 def sample_app():
+    """Only the manifest validator can find a critical risk in this app."""
     d = tempfile.mkdtemp()
     os.makedirs(os.path.join(d, "App"))
     with open(os.path.join(d, "App", "Info.plist"), "w") as f:
-        f.write("<plist><dict></dict></plist>")
+        f.write("<plist><dict><key>ITSAppUsesNonExemptEncryption</key><false/></dict></plist>")
     with open(os.path.join(d, "App", "X.swift"), "w") as f:
         f.write(
-            'import CoreLocation\nclass A { func signIn(){} func createAccount(){} }\nlet m=CLLocationManager()\nlet u="https://staging.example.com"\nimport Stripe\n'
+            'import Foundation\nlet privacyPolicy = "https://example.com/privacy"\n'
         )
+    with open(os.path.join(d, "App", "PrivacyInfo.xcprivacy"), "w") as f:
+        f.write("<plist><dict><key>NSPrivacyTracking</key><false/>"
+                "<key>NSPrivacyCollectedDataTypes</key><array/>"
+                "<key>NSPrivacyAccessedAPITypes</key><array/></dict></plist>")
     return d
 
 
@@ -985,7 +1130,7 @@ def run_plugin(plugin, command, cwd):
         "const m = await import(process.argv[1]);"
         "const h = await m.AppStoreCompliance({ directory: process.argv[3] });"
         'try { await h["tool.execute.before"]({ tool: "bash" }, { args: { command: process.argv[2] } }); process.exit(0); }'
-        "catch (e) { process.exit(2); }"
+        "catch (e) { console.error(e.message); process.exit(2); }"
     )
     r = subprocess.run(
         ["node", "--input-type=module", "-e", js, "file://" + plugin, command, cwd],
@@ -993,7 +1138,7 @@ def run_plugin(plugin, command, cwd):
         text=True,
         timeout=180,
     )
-    return r.returncode
+    return r.returncode, (r.stdout + r.stderr).strip()
 
 
 def verify(tool, lay, guard, repo_dir):
@@ -1002,18 +1147,22 @@ def verify(tool, lay, guard, repo_dir):
         ok("guard present at " + shown(guard))
     else:
         fail("guard missing at " + shown(guard))
-    if tool != "copilot-repo":
-        sk = skill_dir()
-        need = (
-            "SKILL.md",
-            "data/rejection-patterns.json",
-            "data/regulatory-deadlines.json",
-            "docs/PRE-SUBMISSION-CHECKLIST.md",
-            "scripts/deadline-checker.py",
-            "scripts/validate-privacy-manifest.py",
-            ".citation-allowlist",
-        )
-        missing = [p for p in need if not os.path.exists(os.path.join(sk, p))]
+    sk = repo_payload_dir(lay) if tool == "copilot-repo" else skill_dir()
+    if tool == "copilot-repo":
+        files = read_repo_payload(sk)
+        if files is None:
+            fail("private repository payload ownership manifest is missing or invalid at " + shown(sk))
+        else:
+            missing = [p for p in REQUIRED_PAYLOAD if p not in files]
+            missing.extend(p for p in files if not os.path.isfile(os.path.join(sk, p)))
+            changed = [p for p, digest in files.items() if os.path.isfile(os.path.join(sk, p))
+                       and file_digest(os.path.join(sk, p)) != digest]
+            if missing or changed:
+                fail("private repository payload is incomplete or changed: " + " ".join(sorted(set(missing + changed))))
+            else:
+                ok("private repository payload complete at " + shown(sk))
+    else:
+        missing = [p for p in REQUIRED_PAYLOAD if not os.path.exists(os.path.join(sk, p))]
         if missing:
             fail("skill payload is missing " + " ".join(missing))
         else:
@@ -1072,18 +1221,19 @@ def check_plugin(lay, app):
         if not os.path.isfile(path):
             fail("plugin missing at " + shown(path))
             return
-    rc = run_plugin(lay["config"], SUBMIT, app)
-    if rc is None:
+    result = run_plugin(lay["config"], SUBMIT, app)
+    if result is None:
         note(
             "node not found, so the plugin was not exercised here. OpenCode runs it with its own runtime."
         )
         UNVERIFIED.append("the OpenCode plugin was not exercised (node not found)")
         return
-    if rc == 2:
+    rc, out = result
+    if rc == 2 and MANIFEST_FIXTURE_RULE in out:
         ok("the plugin stops a submit command")
     else:
-        fail("the plugin did not stop a submit command (exit " + str(rc) + ")")
-    if run_plugin(lay["config"], "ls -la", app) == 0:
+        fail("the plugin did not report the validator-only fixture (exit " + str(rc) + ")")
+    if run_plugin(lay["config"], "ls -la", app)[0] == 0:
         ok("the plugin lets an ordinary command through")
     else:
         fail("the plugin stopped an ordinary command")
@@ -1168,15 +1318,15 @@ def check_hooks(tool, lay, guard, app, repo_dir):
 def prove(line, tool, style, app, run_dir):
     """Feeds a submit command and an ordinary one to the registered command, in the tool's own payload shape."""
     label = {"vscode": " for VS Code", "copilot": " for Copilot"}.get(style, "")
-    rc, _ = run_hook(line, payload_for(tool, style, SUBMIT, app), run_dir, tool)
-    if rc == 2:
+    rc, out = run_hook(line, payload_for(tool, style, SUBMIT, app), run_dir, tool)
+    if rc == 2 and MANIFEST_FIXTURE_RULE in out:
         ok(
             "the registered command blocks a submit command in this tool's own payload shape"
-            + label
+            + label + " (validator-only privacy manifest fixture)"
         )
     else:
         fail(
-            "the registered command did not block a submit command"
+            "the registered command did not block and report the validator-only privacy manifest fixture"
             + label
             + " (exit "
             + str(rc)
@@ -1206,7 +1356,7 @@ def prove_ps(line, tool, app, run_dir):
         input=json.dumps(payload_for(tool, "copilot", SUBMIT, app)),
         capture_output=True, text=True, cwd=run_dir, timeout=180,
     )
-    if r.returncode == 2:
+    if r.returncode == 2 and MANIFEST_FIXTURE_RULE in r.stdout + r.stderr:
         ok("the Windows powershell handler blocks a submit command")
     else:
         fail("the Windows powershell handler did not block a submit command (exit " + str(r.returncode) + ")")
@@ -1225,7 +1375,18 @@ def uninstall(tool, lay, guard, dry):
         if p and os.path.exists(p):
             os.remove(p)
     if tool == "copilot-repo":
-        print("Removed the guard and the hook from the repository.")
+        root = repo_payload_dir(lay)
+        files = read_repo_payload(root)
+        if files is not None:
+            remove_owned_payload(root, files)
+            os.remove(os.path.join(root, REPO_PAYLOAD_MANIFEST))
+            try:
+                os.rmdir(root)
+            except OSError:
+                pass
+        elif os.path.exists(root):
+            note("keeping repository payload files because their ownership manifest is missing or invalid")
+        print("Removed the guard, owned payload files and the hook from the repository.")
     else:
         guards = read_guards()
         guards.pop(guard, None)
@@ -1300,12 +1461,18 @@ def main(argv):
         print("  would copy the guard to " + shown(guard))
         if tool != "copilot-repo":
             print("  would copy the skill to " + shown(skill_dir()))
+        else:
+            print("  would copy the private repository payload to " + shown(repo_payload_dir(lay)))
         if lay["command"]:
             print("  would write the audit command to " + shown(lay["command"]))
         register(tool, lay, guard, True)
         return 0
     print("Installing the App Store Compliance Playbook for " + SPECS[tool]["name"])
-    copy_payload(tool, lay, guard)
+    try:
+        copy_payload(tool, lay, guard)
+    except (OSError, ValueError) as exc:
+        fail("could not copy the install payload: " + str(exc))
+        return 1
     if not register(tool, lay, guard, False):
         verify(tool, lay, guard, repo_dir)
         return 1

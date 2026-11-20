@@ -30,7 +30,7 @@ Pick one row. The time shown is for that first step.
 | Not a developer | Open [the checklist](docs/PRE-SUBMISSION-CHECKLIST.md) and do its first two checks | 5 minutes |
 | Using an AI coding tool (Claude Code, Codex, Gemini CLI, GitHub Copilot, Cursor, Grok, Qwen, Kimi and more), and want this on every submit | Go to [the install](#install-it-into-your-ai-coding-tool) | 1 minute |
 
-The two commands. Needs git and bash. The first downloads this playbook. The second scans your app. Nothing is installed and nothing in your app is changed.
+The two commands. Needs git and bash, plus Python 3 for the Android SDK and privacy manifest checks. The first downloads this playbook. The second scans your app. Nothing is installed and nothing in your app is changed.
 
 ```
 git clone https://github.com/TaigaShinohara/StoreGate ~/repositories/StoreGate
@@ -43,7 +43,9 @@ Replace only `/path/to/your/app`, with the folder that holds your Xcode project 
 |---|---|---|
 | `BLOCKED.` | A critical rejection risk was found | Fix each `[CRITICAL]` line using the `fix.` line under it, then run the same command again |
 | `CLEAR.` | No critical risk in your code | Do the account and listing checks in [the checklist](docs/PRE-SUBMISSION-CHECKLIST.md) |
-| `NOT CHECKED.` | No iOS or Android project was found in that folder, or the guard could not write its scan files. Run by hand this exits 1. As a hook it lets the command through | Point it at the right folder, and check the temp folder is writable. A managed Expo app with no native folders still gets its `app.json` or `app.config` read for purpose strings, the privacy manifest and Android permissions. Run `npx expo prebuild` to cover the native code too |
+| `NOT CHECKED.` | A required check did not finish, the Android SDK value could not be resolved, or no native project was found. Run by hand this exits 1; a submit hook refuses the command with exit 2 | Read the reason, restore any missing helpers and point the guard at the native project. A managed Expo app with no native folders still gets its `app.json` or `app.config` read. Run `npx expo prebuild` to cover the native code too |
+
+The Android SDK check supports an explicit application plugin and literal SDK values in a simple default configuration or product flavors. Version catalogs, convention plugins, applied build scripts and computed configuration can require Gradle evaluation. The guard does not execute your build scripts: it reports these cases as unresolved, so check the SDK in the built release variant and record that verification in your release checklist. A separate static value cannot prove what an unresolved build actually uses.
 
 ## What you get
 
@@ -61,7 +63,9 @@ If it saves you one rejection, it has paid for the ten minutes it takes to read.
 
 This puts the check in front of every submit. Your agent runs the guard before any submit command, such as an upload to App Store Connect or Google Play, and stops the command when a critical rejection risk stands. For a one-time scan, skip this section and use Start here.
 
-One command per tool, about a minute. Needs git and bash. Every tool other than Claude Code also needs python3.
+The hook also stops a submit when required checks could not finish. A code scan's `CLEAR` means no critical findings in the checked source. A full release review is BLOCKED by unresolved critical or high findings, and INCOMPLETE while required listing, runtime, account or legal evidence is missing.
+
+One command per tool, about a minute. Needs git and bash. Every tool other than Claude Code also needs python3 to install. All tools need Python 3 for the Android SDK and privacy manifest checks at scan time.
 
 ```
 git clone https://github.com/TaigaShinohara/StoreGate ~/repositories/StoreGate
@@ -86,12 +90,12 @@ bash ~/repositories/StoreGate/scripts/install.sh --tool all
 | Augment Auggie | `install.sh --tool auggie` | Hook, skill | Start a new Auggie session |
 | Windsurf | `install.sh --tool windsurf` | Hook, skill | Restart Windsurf |
 
-Every run ends with `Install verified.` only after it has fed a submit command to the hook in that tool's own payload format and seen it blocked. For OpenCode that check runs the plugin under node, so without node the run says `Installed, but not fully verified.` instead. If you see a `FAIL` line instead, fix that line and run the same command with `doctor` added.
+Every run ends with `Install verified.` only after it has checked the installed payload and fed submit commands to the hook in that tool's own format, including a privacy-manifest finding that requires the installed validator. Without Python 3, or without node for OpenCode, the run says `Installed, but not fully verified.` and names the remaining check. Install the missing runtime and run `doctor`. If you see a `FAIL` line, fix that line and run the same command with `doctor` added.
 
 What it writes, so you can check it.
 
 - The guard, into that tool's own folder, for example `~/.codex/hooks/` or `~/.gemini/hooks/`.
-- The skill. Claude Code reads it from `~/.claude/skills/`. Every other tool reads one shared copy in `~/.agents/skills/`.
+- The skill. Claude Code reads it from `~/.claude/skills/`. Other user-level installs share `~/.agents/skills/`. The Copilot repository install keeps its required scripts and data under `.github/hooks/storegate/` in the app repository, with no HOME installation. Commit that payload together with the hook; the scanner excludes its own payload from app source checks.
 - One hook entry in that tool's config (`~/.claude/settings.json`, `~/.codex/hooks.json`, `~/.gemini/settings.json`, `~/.cursor/hooks.json`, `~/.copilot/hooks/` or `$COPILOT_HOME/hooks/`), or for OpenCode one plugin file in `~/.config/opencode/plugins/`. Every other setting is kept, and a dated backup sits next to a file that already existed. A config that is not valid JSON or repeats a key is never rewritten. You get the exact block to paste instead.
 - For Gemini CLI it also turns on `tools.enableHooks`, which Gemini needs before version 0.26 to run any hook.
 - For Kimi Code it appends one marked `[[hooks]]` block to `~/.kimi-code/config.toml` (or `$KIMI_CODE_HOME/config.toml`) and never rewrites or prints the rest of that file, which can hold API keys. Uninstall removes exactly that block.
@@ -123,7 +127,7 @@ Steps:
 1. Clone https://github.com/TaigaShinohara/StoreGate into ~/repositories/StoreGate.
 2. Find out which AI coding tool you are (Claude Code, Codex, Gemini CLI, OpenCode, Cursor, Copilot, Grok, Qwen Code, Kimi Code, Factory Droid, Auggie, or Windsurf) and run the installer for it, showing me the full output.
    bash ~/repositories/StoreGate/scripts/install.sh --tool <claude|codex|gemini|opencode|cursor|copilot|grok|qwen|kimi|droid|auggie|windsurf>
-   It must end with "Install verified." (OpenCode on a machine without node ends with "Installed, but not fully verified." instead, install node and run doctor.) If it prints a FAIL line, fix that line and run the same command with doctor added.
+   It must end with "Install verified." If it ends with "Installed, but not fully verified.", install the named missing runtime and run doctor. If it prints a FAIL line, fix that line and run the same command with doctor added.
    If you are none of these, tell me so and stop. Do not wire the hook by hand.
 3. Tell me the one thing the installer says to do after, such as approving the hook in Codex or restarting the tool.
 4. Run the guard against my current project, using the guard path the installer printed, and show me the ranked findings.
@@ -257,7 +261,7 @@ Your iOS or Android project
         +-- clean -------------------------->  CLEAR, then the checklist for what a scan cannot see
 ```
 
-The same flow in words. Your AI tool reads the rule while you build. When you are about to ship, the guard scans your project. A critical risk stops the upload and names the fix. A clean scan ends with `CLEAR.` and lets the upload through.
+The same flow in words. Your AI tool reads the rule while you build. When you are about to ship, the guard scans your project. A critical risk stops the upload and names the fix. A required check that cannot finish also stops the submit with `NOT CHECKED.`. A complete scan with no critical findings ends with `CLEAR.`; high findings and the applicable manual checklist still need review before submission.
 
 The guard fires automatically before submission commands such as fastlane, eas submit, gradle bundleRelease, and xcrun altool. If it finds a critical risk, it stops the upload and tells you the exact fix. Your AI tool now refuses to help you ship a rejection.
 
@@ -320,7 +324,7 @@ What to expect, measured on 30 September 2026.
 | `monitor-regulatory.py` | About 95 lines | No |
 | `monitor-android.py`, `monitor-ai-policy.py` | About 205 and 95 lines | Only with `--output-docs <path>` or `--pr-output <path>` |
 | `monitor-privacy.py`, `monitor-security.py` | About 27 lines each | Only with `--output-docs <path>` or `--pr-output <path>` |
-| `release-audit.py` | About two minutes. It checks the playbook itself first, then your app. Pass `--metadata <dir>` with your pulled listing. Exit 0 is clear, 2 is blocked on a critical or high finding, 3 is incomplete because a scan failed or the listing was not audited | `RELEASE-READINESS-REPORT.md` in your app folder |
+| `release-audit.py` | It checks the playbook first, then your app and the full listing passed with `--metadata <dir>`. Exit 2 is blocked on a critical or high finding; otherwise exit 3 means manual verification remains. It cannot approve a submission because it does not receive runtime, account or legal evidence | `RELEASE-READINESS-REPORT.md` in your app folder |
 | `generate-timeline.py` | The open deadlines, then one completion line | Rewrites `docs/REGULATORY-TIMELINE.md` in the playbook folder |
 | `deadline-checker.py` | About 175 lines of detail. Add `--brief` for one line per open deadline | No |
 
@@ -418,7 +422,7 @@ python3 scripts/deadline-checker.py
 | `scripts/monitor-android.py` | Android and Google Play requirements compliance monitor |
 | `scripts/monitor-ai-policy.py` | Platform-specific generative AI policy monitor (Apple and Google) |
 | `scripts/deadline-checker.py` | Prints every regulatory deadline inside a rolling 90-day window, timezone-aware. Runs automatically as part of the guard |
-| `scripts/release-audit.py` | Release readiness compliance audit engine, writes `RELEASE-READINESS-REPORT.md` into the audited project. Runs the guard and the listing audit, and `--metadata <dir>` points the listing audit at a pulled metadata folder. Exit 0 is clear. Exit 2 is blocked on a critical or high finding. Exit 3 is incomplete, a scan failed or did not check the app |
+| `scripts/release-audit.py` | Static findings and remaining manual verification, written to `RELEASE-READINESS-REPORT.md` in the audited project. Runs the guard and the full listing audit with `--metadata <dir>`. Exit 2 is blocked on a critical or high finding. Otherwise exit 3 is incomplete: the tool does not receive manual evidence and cannot approve submission |
 | `scripts/accessibility-audit.py` | Continuous accessibility compliance audit (VoiceOver, Dynamic Type, Reduce Motion, contrast, TalkBack, touch targets). Runnable standalone, deliberately not wired into the guard hook |
 | `scripts/validate.py` | Validates that `data/rejection-patterns.json`, `data/detection-recipes.json`, and `data/regulatory-deadlines.json` stay internally consistent. Runs in CI |
 | `scripts/generate-references.py` | Regenerates `references/` from the pattern and recipe data, so the reference tree never drifts from the taxonomy |

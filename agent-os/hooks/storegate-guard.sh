@@ -10,7 +10,34 @@ HOOK_LOG="${HOME:-}/.claude/hooks/hook-log.sh"
 [ -f "$HOOK_LOG" ] && source "$HOOK_LOG" 2>/dev/null || true
 log_err() { if type hlog_error >/dev/null 2>&1; then hlog_error "app-store-compliance-guard" "$@"; else echo "app-store-compliance-guard: $*" >&2; fi; }
 
-CRIT=0; HIGH=0; MED=0; ANY_IOS=0; ANY_AND=0; ANY_NATIVE=0; ANY_RN=0; ANY_WEB=0; ANY_NEEDS_NATIVE=0; NATIVE_HINT=""; UNCHECKED=""; EXPO_READ=0
+CRIT=0; HIGH=0; MED=0; ANY_IOS=0; ANY_AND=0; ANY_NATIVE=0; ANY_RN=0; ANY_WEB=0; ANY_NEEDS_NATIVE=0; NATIVE_HINT=""; UNCHECKED=""; EXPO_READ=0; CHECKS_INCOMPLETE=""
+# Repository guards use their own payload. Global guards may use the shared
+# skill only when its ownership registry names this exact installed guard.
+resolve_helper() {
+  local name="$1" candidate guard_dir guard_path shared
+  guard_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)" || return 1
+  guard_path="$guard_dir/$(basename "$0")"
+  # ../../scripts here belongs to the application, not StoreGate. Never borrow it
+  # or a global install to cover up an incomplete repository hook installation.
+  case "$guard_dir" in
+    */.github/hooks) candidate="$guard_dir/storegate/scripts/$name" ;;
+    */agent-os/hooks) candidate="$guard_dir/../../scripts/$name" ;;
+    */.claude/hooks) candidate="$guard_dir/../skills/app-store-compliance/scripts/$name" ;;
+    *) candidate="" ;;
+  esac
+  if [ -n "$candidate" ]; then
+    [ -f "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
+    return 1
+  fi
+  for shared in "$guard_dir/../skills/app-store-compliance" "${HOME:-}/.agents/skills/app-store-compliance"; do
+    if [ -f "$shared/.guards" ] && [ -f "$shared/scripts/$name" ] && \
+      awk -F '\t' -v path="$guard_path" 'NF == 2 && $2 == path { found=1 } END { exit !found }' "$shared/.guards"; then
+      printf '%s\n' "$shared/scripts/$name"; return 0
+    fi
+  done
+  return 1
+}
+mark_incomplete() { CHECKS_INCOMPLETE="${CHECKS_INCOMPLETE:+$CHECKS_INCOMPLETE; }$1"; }
 FILELIST=""
 REPORT=""; REPORT_DEGRADED=0
 cleanup() { [ -n "$FILELIST" ] && rm -f "$FILELIST" "$FILELIST.blob" "$FILELIST.manifest" "$FILELIST.code" "$FILELIST.impl" 2>/dev/null; [ -n "$REPORT" ] && rm -f "$REPORT" 2>/dev/null; true; }
@@ -39,7 +66,7 @@ cursor_reply() {  # $1 exit code about to be returned. Prints the permission JSO
   if [ "$1" -eq 2 ]; then
     local why="with ${CRIT:-0} critical rejection risk(s)"
     [ "${CRIT:-0}" -eq 0 ] && why="because the scan did not finish"
-    printf '{"permission":"deny","user_message":"App Store Compliance Guard blocked this submit %s.","agent_message":"Blocked by app-store-compliance-guard %s. Critical findings. %s Fix each one using the report on stderr, or set APP_STORE_GUARD_OK=1 to override."}\n' "$why" "$why" "${CURSOR_IDS:-none listed.}"
+    printf '{"permission":"deny","user_message":"App Store Compliance Guard blocked this submit %s.","agent_message":"Blocked by app-store-compliance-guard %s. Findings or incomplete coverage. %s Fix the findings or restore required checks using the report on stderr, then rerun."}\n' "$why" "$why" "${CURSOR_IDS:-none listed.}"
   else
     printf '{"permission":"allow"}\n'
   fi
@@ -237,7 +264,7 @@ ta'; }
       awk -v n="$lane" '$0 ~ "lane[[:space:]]+:" n "([^A-Za-z0-9_]|$)" { on=1; next } on && /^[[:space:]]*(private_)?lane[[:space:]]+:/ { on=0 } on' "$ff" 2>/dev/null \
         | grep -qE "$UPLOAD_ACTION_RE" && return 0
     done <<FASTFILES
-$(find "$DIR" -maxdepth 3 -name Fastfile -not -path '*/node_modules/*' 2>/dev/null | head -5)
+$(find "$DIR" -maxdepth 3 -name Fastfile -not -path '*/node_modules/*' -not -path '*/.github/hooks/storegate/*' 2>/dev/null | head -5)
 FASTFILES
     return 1
   }
@@ -267,7 +294,7 @@ FASTFILES
       sub="$(printf '%s' "$rseg" | sed -nE 's/.*[[:space:]](--dir|--prefix|--cwd|-C)[=[:space:]]+([^[:space:]]+).*/\2/p' | head -1)"
       case "$sub" in /*|*..*) sub="" ;; esac
       all=0; printf '%s' "$rseg" | grep -qE '(^|[^A-Za-z0-9_./-])(turbo|lerna)[[:space:]]|(^|[^A-Za-z0-9_./-])nx[[:space:]]|[[:space:]](-r|--recursive|-ws|--workspaces|foreach)([[:space:]=]|$)' && all=1
-      files="$(find "$DIR" -maxdepth 6 \( -type d \( -name node_modules -o -name .git -o -name Pods -o -name build \) -prune \) -o \( -name package.json -o -name project.json \) -print 2>/dev/null | head -200)"
+      files="$(find "$DIR" -maxdepth 6 \( -type d \( -path '*/.github/hooks/storegate' -o -name node_modules -o -name .git -o -name Pods -o -name build \) -prune \) -o \( -name package.json -o -name project.json \) -print 2>/dev/null | head -200)"
       if [ -n "$sub" ] && [ -f "$DIR/$sub/package.json" ]; then pick="$DIR/$sub/package.json"
       elif [ -n "$sel" ]; then
         pick=""
@@ -440,7 +467,7 @@ if [ -n "$CMD" ] && printf '%s' "$CMD" | grep -qiE '(-p|--platform)[[:space:]=]+
 fi
 
 [ -z "$DIR" ] && DIR="$PWD"
-[ -d "$DIR" ] || { log_err "project dir not found. $DIR"; cursor_reply 0; exit 0; }
+[ -d "$DIR" ] || { log_err "project dir not found. $DIR"; cursor_reply 2; exit 2; }
 [ -L "${DIR%/}" ] && DIR="$(cd "$DIR" 2>/dev/null && pwd -P)"   # find never descends a symlinked start point (issue #612)
 
 # Every text file once, into one blob, so a hundred grep_has calls read one file instead of every file
@@ -529,7 +556,7 @@ impl_has() {  # comment-stripped source and HTML only. a .strings, plist or json
 
 # The app's own privacy manifest. A copy under Pods, Carthage, node_modules, SwiftPM or Flutter symlinks is the SDK's.
 own_privacy_manifest() {
-  find "$DIR" -mindepth 1 \( -type d \( -name node_modules -o -name Pods -o -name Carthage -o -name .build -o -name checkouts \
+  find "$DIR" -mindepth 1 \( -type d \( -path '*/.github/hooks/storegate' -o -name node_modules -o -name Pods -o -name Carthage -o -name .build -o -name checkouts \
     -o -name SourcePackages -o -name .symlinks -o -name vendor -o -name .pub-cache -o -name .dart_tool -o -name DerivedData \
     -o -name build -o -name .git ${NESTED_PRUNE[@]+"${NESTED_PRUNE[@]}"} \) -prune \) -o -name 'PrivacyInfo.xcprivacy' -print 2>/dev/null \
     | grep . >/dev/null
@@ -609,22 +636,21 @@ XPLAT_IAP='in_app_purchase|purchases_flutter|flutter_inapp_purchase|react-native
 find_app() {  # find_app <maxdepth> <find name expression...>
   local depth="$1"; shift
   find "$DIR" -mindepth 1 -maxdepth "$depth" \
-    \( -type d \( -name node_modules -o -name Pods -o -name .git -o -name build -o \( -name dist -not -path '*/src/dist' \) \
+    \( -type d \( -path '*/.github/hooks/storegate' -o -name node_modules -o -name Pods -o -name .git -o -name build -o \( -name dist -not -path '*/src/dist' \) \
       -o -name DerivedData -o -name vendor -o -name .dart_tool -o -name Carthage -o -name .pub-cache \
       ${NESTED_PRUNE[@]+"${NESTED_PRUNE[@]}"} \) -prune \) \
     -o \( "$@" \) -print 2>/dev/null
 }
 NESTED_PRUNE=()
 find_tree() {  # find "$DIR" <expr>, the whole tree as before, minus the nested app roots when the root is itself an app
-  if [ "${#NESTED_PRUNE[@]}" -eq 0 ]; then find "$DIR" "$@" 2>/dev/null
-  else find "$DIR" \( -type d \( -name '' "${NESTED_PRUNE[@]}" \) -prune \) -o "$@" 2>/dev/null; fi
+  find "$DIR" \( -type d \( -path '*/.github/hooks/storegate' ${NESTED_PRUNE[@]+"${NESTED_PRUNE[@]}"} \) -prune \) -o "$@" 2>/dev/null
 }
 FILELIST="$(mktemp 2>/dev/null)" || FILELIST=""
 { [ -n "$FILELIST" ] && : > "$FILELIST" 2>/dev/null; } || FILELIST="/tmp/ascg.$$"
 # No scan buffer means no scan. Say so rather than end CLEAR on an empty file list.
 if [ -z "$FILELIST" ] || ! : > "$FILELIST" 2>/dev/null; then
   NOTE="NOT CHECKED. The guard could not create its scan buffer in ${TMPDIR:-/tmp}, so nothing was scanned. Point TMPDIR at a writable folder and run it again."
-  if [ -n "$STDIN_JSON" ]; then echo "app-store-compliance-guard. $NOTE" >&2; cursor_reply 0; exit 0; fi
+  if [ -n "$STDIN_JSON" ]; then echo "app-store-compliance-guard. $NOTE" >&2; cursor_reply 2; exit 2; fi
   echo "$NOTE"; exit 1
 fi
 SCAN_ERROR=""
@@ -670,13 +696,13 @@ scan_tree() {
 # bundled web output (dist) never ship in the binary, and a virtualenv's vendored JSON otherwise
 # reads as app source. .xcprivacy is scanned because NSPrivacyCollectedDataTypes lives there.
 find "$DIR" -mindepth 1 \
-  \( -type d \( -name node_modules -o -name Pods -o -name .git -o -name build -o \( -name dist -not -path '*/src/dist' \) \
+  \( -type d \( -path '*/.github/hooks/storegate' -o -name node_modules -o -name Pods -o -name .git -o -name build -o \( -name dist -not -path '*/src/dist' \) \
     -o -name DerivedData -o -name vendor -o -name .dart_tool -o -name Carthage \
     -o -name '*Tests' -o -name androidTest -o -name __tests__ -o -name test -o -name tests \
     -o -name integration_test -o -name .venv -o -name venv -o -name site-packages -o -name .pub-cache \
     ${NESTED_PRUNE[@]+"${NESTED_PRUNE[@]}"} \) -prune \) \
   -o -type f \( \
-  -name '*.swift' -o -name '*.m' -o -name '*.h' -o -name '*.kt' -o -name '*.java' \
+  -name '*.swift' -o -name '*.m' -o -name '*.mm' -o -name '*.h' -o -name '*.kt' -o -name '*.java' \
   -o -name '*.xml' -o -name '*.plist' -o -name '*.gradle' -o -name '*.kts' \
   -o -name '*.json' -o -name '*.js' -o -name '*.jsx' -o -name '*.ts' -o -name '*.tsx' \
   -o -name '*.dart' -o -name '*.xcconfig' -o -name '*.yaml' -o -name '*.yml' \
@@ -894,7 +920,7 @@ if [ "$IOS_TARGET_ACTIVE" -eq 1 ]; then
   fi
   # A Podfile has no extension, so it is outside the source list. Read it directly.
   podfile_below_ios13() {
-    find "$DIR" -maxdepth 4 \( -type d \( -name Pods -o -name node_modules \) -prune \) -o -name Podfile -type f -print 2>/dev/null \
+    find "$DIR" -maxdepth 4 \( -type d \( -path '*/.github/hooks/storegate' -o -name Pods -o -name node_modules \) -prune \) -o -name Podfile -type f -print 2>/dev/null \
       | head -5 | while IFS= read -r pf; do grep -Eq "^[[:space:]]*platform[[:space:]]+:ios,[[:space:]]*.(8|9|10|11|12)([.][0-9]+)*." "$pf" && echo hit; done | grep -q hit
   }
   # App Store Connect refuses uploads that target below iOS 13 (Upcoming Requirements page).
@@ -961,7 +987,7 @@ PBXPY
   # App Review runs on an IPv6-only NAT64 network (2.5.5). IPv4-only socket calls fail there.
   # C, C++ and Objective-C++ sit outside the shared source list, so read the app's own ones here.
   native_ipv4_only() {
-    find "$DIR" -maxdepth 8 \( -type d \( -name Pods -o -name node_modules -o -name vendor -o -name Vendor -o -name ThirdParty -o -name third_party -o -name external -o -name External -o -name Carthage -o -name build -o -name .git \) -prune \) \
+    find "$DIR" -maxdepth 8 \( -type d \( -path '*/.github/hooks/storegate' -o -name Pods -o -name node_modules -o -name vendor -o -name Vendor -o -name ThirdParty -o -name third_party -o -name external -o -name External -o -name Carthage -o -name build -o -name .git \) -prune \) \
       -o -type f \( -name '*.c' -o -name '*.cpp' -o -name '*.cc' -o -name '*.mm' \) -print 2>/dev/null | head -2000 \
       | tr '\n' '\0' | xargs -0 grep -EIls -e '(^|[^A-Za-z0-9_])(inet_addr|inet_aton|gethostbyname)[[:space:]]*\(' 2>/dev/null | grep -q .
   }
@@ -1014,36 +1040,30 @@ PBXPY
   # A manifest that exists can still be internally inconsistent. Apple validates
   # these keys at upload and rejects by email (ITMS-91xxx) after processing, so
   # the binary installs from TestFlight and is still barred from review.
-  MANIFEST_VALIDATOR=""
-  for candidate in \
-    "$(dirname "$0")/../../scripts/validate-privacy-manifest.py" \
-    "$(dirname "$0")/../skills/app-store-compliance/scripts/validate-privacy-manifest.py" \
-    "${HOME:-}/.claude/skills/app-store-compliance/scripts/validate-privacy-manifest.py" \
-    "${HOME:-}/.agents/skills/app-store-compliance/scripts/validate-privacy-manifest.py"; do
-    [ -f "$candidate" ] && { MANIFEST_VALIDATOR="$candidate"; break; }
-  done
-  if [ -n "$MANIFEST_VALIDATOR" ] && command -v python3 >/dev/null 2>&1; then
-    # Same exclusions as the source file list. A pod's manifest is the vendor's job, a Tests fixture never ships.
-    : > "$FILELIST.manifest" 2>/dev/null || SCAN_ERROR="the privacy manifest results could not be written to $FILELIST.manifest"
-    find "$DIR" -mindepth 1 \
-      \( -type d \( -name node_modules -o -name Pods -o -name .git -o -name build -o \( -name dist -not -path '*/src/dist' \) \
-        -o -name DerivedData -o -name vendor -o -name .dart_tool -o -name Carthage \
-        -o -name '*Tests' -o -name androidTest -o -name __tests__ -o -name test -o -name tests \
-        -o -name integration_test -o -name .venv -o -name venv -o -name site-packages -o -name .pub-cache \
-      ${NESTED_PRUNE[@]+"${NESTED_PRUNE[@]}"} \) -prune \) \
-      -o -name 'PrivacyInfo.xcprivacy' -print 2>/dev/null \
-      | while IFS= read -r manifest; do
-          python3 "$MANIFEST_VALIDATOR" "$manifest" 2>/dev/null
-        done > "$FILELIST.manifest" 2>/dev/null || true
-    if [ -s "$FILELIST.manifest" ]; then
-      while IFS="$(printf '\t')" read -r sev id msg; do
-        [ -n "$id" ] || continue
-        finding "$sev" "$id" "$msg" "Correct the privacy manifest so its keys agree, then rebuild. Reference. https://developer.apple.com/documentation/bundleresources/privacy_manifest_files"
-      done < "$FILELIST.manifest"
+  MANIFEST_VALIDATOR="$(resolve_helper validate-privacy-manifest.py || true)"
+  if grep '/PrivacyInfo[.]xcprivacy$' "$FILELIST" | grep . >/dev/null; then
+    if [ -n "$MANIFEST_VALIDATOR" ] && tool_ok python3 -c pass; then
+      while IFS= read -r manifest; do
+        [ -n "$manifest" ] || continue
+        MANIFEST_RESULT="$(python3 "$MANIFEST_VALIDATOR" "$manifest" 2>/dev/null)"; MANIFEST_RC=$?
+        if [ "$MANIFEST_RC" -gt 2 ] || { [ "$MANIFEST_RC" -ne 0 ] && [ -z "$MANIFEST_RESULT" ]; }; then
+          mark_incomplete "privacy manifest validator failed for $manifest"
+        fi
+        while IFS="$(printf '\t')" read -r sev id msg; do
+          if [ -z "$id" ] || [ -z "$msg" ]; then
+            [ -n "$sev$id$msg" ] && mark_incomplete "invalid privacy validator output for $manifest"
+            continue
+          fi
+          case "$sev" in critical|high|medium) ;; *) mark_incomplete "invalid privacy validator output for $manifest"; continue ;; esac
+          finding "$sev" "$id" "$msg" "Correct the privacy manifest so its keys agree, then rebuild. Reference. https://developer.apple.com/documentation/bundleresources/privacy_manifest_files"
+        done <<MANIFEST_RESULTS
+$MANIFEST_RESULT
+MANIFEST_RESULTS
+      done < <(grep '/PrivacyInfo[.]xcprivacy$' "$FILELIST")
+    else
+      mark_incomplete "privacy manifest validator or working python3 unavailable"
+      finding medium "APPLE-MANIFEST-VALIDATOR-UNAVAILABLE" "Privacy manifest internals were not validated because the bundled validator or working python3 is missing" "Install python3 and reinstall StoreGate with its scripts payload, then run the guard again."
     fi
-    rm -f "$FILELIST.manifest" 2>/dev/null || true
-  elif find_app 12 -name 'PrivacyInfo.xcprivacy' | grep . >/dev/null; then
-    finding medium "APPLE-MANIFEST-VALIDATOR-UNAVAILABLE" "Privacy manifests present but python3 or scripts/validate-privacy-manifest.py is missing, so their internals were not validated" "Install python3 and keep scripts/validate-privacy-manifest.py next to the guard, or run plutil -lint on each manifest by hand."
   fi
   [ "$IS_UNITY" -eq 1 ] || grep_has 'ITSAppUsesNonExemptEncryption' || finding high "APPLE-EXPORT-COMPLIANCE-MISSING" "ITSAppUsesNonExemptEncryption not set" "Set it in Info.plist or the build stalls in Missing Compliance and never reaches review."
   # Native StoreKit keeps the original restore list. A plugin's own restore call only counts for a plugin app.
@@ -1160,11 +1180,35 @@ if [ "$IS_AND" -eq 1 ]; then
   if ! grep_has 'privacyPolicy|privacy-policy'; then
     finding high "GOOGLE-MISSING-PRIVACY-POLICY" "No privacy policy reference found" "Publish a privacy policy and set its URL in the Play Console store listing."
   fi
-  # Every build.gradle in the source list. A bare ** glob without globstar only saw one directory level, so
-  # android/app/build.gradle was never read. Play rejects new apps and updates below API 36 since 31 August 2026.
-  TSDK="$(grep -E '/build\.gradle(\.kts)?$' "$FILELIST" | tr '\n' '\0' | xargs -0 grep -hoE 'targetSdk(Version)?[[:space:]=]+[0-9]+' 2>/dev/null | grep -oE '[0-9]+' | sort -n | tail -1)"
-  if [ -n "$TSDK" ] && [ "$TSDK" -lt 36 ]; then
-    finding critical "GOOGLE-TARGET-API" "targetSdk is $TSDK, below the API 36 floor Play enforces for new apps and updates since 31 August 2026" "Target API 36 or higher (Wear OS and Automotive 35, TV and XR 34), or request the Play Console extension available until 1 November 2026." src 'targetSdk'
+  # Application module/variant SDKs are checked individually. Comments, library
+  # targets and a newer sibling can never conceal an old release target.
+  TSDK=""; SDK_HELPER="$(resolve_helper android-target-sdk.py || true)"
+  if [ -n "$SDK_HELPER" ] && tool_ok python3 -c pass; then
+    SDK_RESULT="$(python3 "$SDK_HELPER" "$FILELIST" 2>/dev/null)"; SDK_RC=$?
+    if [ "$SDK_RC" -ne 0 ] || [ -z "$SDK_RESULT" ]; then
+      mark_incomplete "Android target SDK analysis failed"
+    else
+      while IFS="$(printf '\t')" read -r kind value detail; do
+        # read collapses empty tab fields, so unknown reasons are in value.
+        case "$kind" in
+          resolved)
+            case "$value" in ''|*[!0-9]*) mark_incomplete "invalid Android target SDK analysis output"; continue ;; esac
+            if [ -z "$TSDK" ] || [ "$value" -gt "$TSDK" ]; then TSDK="$value"; fi
+            if [ "$value" -lt 36 ]; then
+              finding critical "GOOGLE-TARGET-API" "targetSdk is $value in $detail, below the API 36 floor Play enforces for new apps and updates since 31 August 2026" "Target API 36 or higher (Wear OS and Automotive 35, TV and XR 34), or request the Play Console extension available until 1 November 2026." src 'targetSdk'
+            fi ;;
+          unknown)
+            mark_incomplete "Android target SDK unresolved: $value${detail:+ $detail}"
+            finding medium "GOOGLE-TARGET-API-UNCHECKED" "Release target SDK was not statically verified: $value${detail:+ $detail}" "Inspect each application's resolved release variant or export its native configuration; expressions and convention plugins require explicit verification." ;;
+          *) mark_incomplete "invalid Android target SDK analysis output" ;;
+        esac
+      done <<SDK_RESULTS
+$SDK_RESULT
+SDK_RESULTS
+    fi
+  else
+    mark_incomplete "Android target SDK helper or working python3 unavailable"
+    finding medium "GOOGLE-TARGET-API-UNCHECKED" "Release target SDK could not be checked without the bundled helper and working python3" "Install python3 and reinstall StoreGate with its scripts payload, then run the guard again."
   fi
   # Android 17 (API 37) targets. contacts picker, location button scope, and local network permission (27 Jan 2027).
   if [ -n "$TSDK" ] && [ "$TSDK" -ge 37 ] 2>/dev/null; then
@@ -1471,7 +1515,7 @@ rn_dependency() {  # $1 package.json. react-native or expo under "dependencies",
   tr -d '\n\r' < "$1" 2>/dev/null | grep -oE '"dependencies"[[:space:]]*:[[:space:]]*\{[^}]*\}' | grep -E '"(react-native|expo)"[[:space:]]*:' >/dev/null
 }
 native_dir_has_project() {  # $1 an ios or android folder. 0 when a project marker sits within four levels
-  find "$1" -maxdepth 4 \( -type d \( -name Pods -o -name node_modules -o -name build \) -prune \) \
+  find "$1" -maxdepth 4 \( -type d \( -path '*/.github/hooks/storegate' -o -name Pods -o -name node_modules -o -name build \) -prune \) \
     -o \( -name 'Info.plist' -o -name '*.xcodeproj' -o -name 'AndroidManifest.xml' -o -name 'build.gradle' -o -name 'build.gradle.kts' \) -print 2>/dev/null \
     | grep . >/dev/null
 }
@@ -1511,20 +1555,20 @@ bare_native_apart() {  # $1 candidate dir below $DIR
   case "$rel" in ios|ios/*|android|android/*) return 1 ;; esac
   # A folder named exactly demo, example, sample, or playground (or plural) holds a repo demo, so it stays in the root scan.
   printf '%s' "$rel" | tr '[:upper:]' '[:lower:]' | tr '/' '\n' | grep -qxE 'demos?|examples?|samples?|playgrounds?' && return 1
-  find "$1" -maxdepth 4 \( -type d \( -name Pods -o -name node_modules -o -name build \) -prune \) \
+  find "$1" -maxdepth 4 \( -type d \( -path '*/.github/hooks/storegate' -o -name Pods -o -name node_modules -o -name build \) -prune \) \
     -o \( -name 'Info.plist' -o -name 'AndroidManifest.xml' \) -print 2>/dev/null | grep . >/dev/null || return 1
   # Only a shippable app splits off. a library module or a local native module stays with the app that uses it.
-  find "$1" -maxdepth 5 \( -type d \( -name Pods -o -name node_modules -o -name build \) -prune \) -o -path '*.xcodeproj/project.pbxproj' -print 2>/dev/null \
+  find "$1" -maxdepth 5 \( -type d \( -path '*/.github/hooks/storegate' -o -name Pods -o -name node_modules -o -name build \) -prune \) -o -path '*.xcodeproj/project.pbxproj' -print 2>/dev/null \
     | while IFS= read -r f; do grep -q 'com\.apple\.product-type\.application' "$f" 2>/dev/null || ! grep -q 'com\.apple\.product-type\.' "$f" 2>/dev/null && echo "$f"; done | grep . >/dev/null \
-    || find "$1" -maxdepth 4 \( -type d \( -name node_modules -o -name build \) -prune \) -o \( -name 'build.gradle' -o -name 'build.gradle.kts' \) -print 2>/dev/null \
+    || find "$1" -maxdepth 4 \( -type d \( -path '*/.github/hooks/storegate' -o -name node_modules -o -name build \) -prune \) -o \( -name 'build.gradle' -o -name 'build.gradle.kts' \) -print 2>/dev/null \
       | while IFS= read -r f; do grep -lE 'com\.android\.application|android\.application' "$f" 2>/dev/null; done | grep . >/dev/null || return 1
   # A native host that embeds the root framework (brownfield) shares its dependencies, so it stays in the root scan.
   grep -rlsE 'RCTBridge|RCTRootView|RCTSurfaceHostingProxyRootView|RCTSurfaceHostingView|RCTReactNativeFactory|RCTAppDelegate|import React$|import React_|ReactActivity|ReactNativeHost|ReactApplication|ReactInstanceManager|DefaultReactNativeHost|RCTDefaultReactNativeFactoryDelegate|ReactNativeDelegate|ExpoAppDelegate|ExpoReactNativeFactory|React-Core|react-native|CodePush|ExpoModulesCore|EXAppDelegate|FlutterEngine|FlutterViewController|Flutter/Flutter\.h|<React/|import Capacitor|Capacitor/Capacitor\.h|CAPBridgeViewController|Cordova/|import Cordova|CDVViewController|CDVPlugin|CDVAppDelegate|import Flutter' "$1" \
     --include='*.swift' --include='*.m' --include='*.mm' --include='*.h' --include='*.kt' --include='*.java' --include='*.gradle' --include='*.kts' --include='Podfile' --include='*.pbxproj' \
     --exclude-dir=Pods --exclude-dir=node_modules --exclude-dir=build 2>/dev/null | grep . >/dev/null && return 1
   # The root keeps the scan for a platform it has no folder of, or its checks for that platform would vanish.
-  native_dir_has_project "$DIR/ios" || ! find "$1" -maxdepth 4 -name 'Info.plist' -not -path '*/Pods/*' 2>/dev/null | grep . >/dev/null || return 1
-  native_dir_has_project "$DIR/android" || ! find "$1" -maxdepth 4 -name 'AndroidManifest.xml' -not -path '*/build/*' 2>/dev/null | grep . >/dev/null || return 1
+  native_dir_has_project "$DIR/ios" || ! find "$1" -maxdepth 4 -name 'Info.plist' -not -path '*/Pods/*' -not -path '*/.github/hooks/storegate/*' 2>/dev/null | grep . >/dev/null || return 1
+  native_dir_has_project "$DIR/android" || ! find "$1" -maxdepth 4 -name 'AndroidManifest.xml' -not -path '*/build/*' -not -path '*/.github/hooks/storegate/*' 2>/dev/null | grep . >/dev/null || return 1
   for f in "$DIR"/settings.gradle "$DIR"/settings.gradle.kts "$DIR"/android/settings.gradle "$DIR"/android/settings.gradle.kts \
     "$DIR"/Podfile "$DIR"/ios/Podfile "$DIR"/*.xcworkspace/contents.xcworkspacedata "$DIR"/ios/*.xcworkspace/contents.xcworkspacedata; do
     [ -f "$f" ] && grep -qF -e "$rel" "$f" 2>/dev/null && return 1
@@ -1703,6 +1747,7 @@ echo "Summary. critical=$CRIT high=$HIGH medium=$MED"
 # Printed before every exit, so a blocked run still says whether every app root was scanned (Fleet Sweep reads it).
 COV_WHY=""
 [ -n "$SCAN_ERROR" ] && COV_WHY="scan error"
+[ -n "$CHECKS_INCOMPLETE" ] && COV_WHY="${COV_WHY:+$COV_WHY; }$CHECKS_INCOMPLETE"
 [ -n "$UNCHECKED" ] && COV_WHY="${COV_WHY:+$COV_WHY; }no native project in $UNCHECKED"
 { [ "$ANY_NATIVE" -eq 0 ] && { [ "$ANY_WEB" -eq 0 ] || [ "$ANY_NEEDS_NATIVE" -eq 1 ]; }; } && COV_WHY="${COV_WHY:+$COV_WHY; }no iOS or Android project found"
 echo "Coverage. $([ -n "$COV_WHY" ] && echo incomplete || echo complete) ios=$ANY_IOS android=$ANY_AND web=$ANY_WEB${COV_WHY:+ reason=$COV_WHY}"
@@ -1714,22 +1759,26 @@ echo "Scan time. ${SECONDS}s"
 echo "Reference. docs/ in the app-store-compliance repo, and data/rejection-patterns.json"
 
 if [ "$CRIT" -gt 0 ]; then
-  if [ "${APP_STORE_GUARD_OK:-0}" = "1" ]; then
+  if [ "${APP_STORE_GUARD_OK:-0}" = "1" ] && [ -z "$COV_WHY" ]; then
     echo "APP_STORE_GUARD_OK set. Critical findings present but the submission is allowed."
     log_err "override used with $CRIT critical findings"
     emit_report 0; exit 0
   fi
   echo ""
-  echo "BLOCKED. $CRIT critical rejection risk(s) above. Fix them, or set APP_STORE_GUARD_OK=1 to override."
+  if [ -n "$COV_WHY" ]; then
+    echo "BLOCKED. $CRIT critical rejection risk(s) above. Fix them and complete the required checks before rerunning."
+  else
+    echo "BLOCKED. $CRIT critical rejection risk(s) above. Fix them, or set APP_STORE_GUARD_OK=1 to override."
+  fi
   echo "Next. Fix each [CRITICAL] line using its fix. line, then run the same command again."
   [ "${REPORT_DEGRADED:-0}" = "1" ] && echo "BLOCKED. $CRIT critical rejection risk(s). Full report on stdout (no temp file available for buffering)." >&2
   emit_report 2; exit 2
 fi
 # A scan buffer that failed mid-run leaves the result unknown, never CLEAR.
-if [ -n "$SCAN_ERROR" ]; then
-  NOTE="NOT CHECKED. The scan could not run because $SCAN_ERROR."
+if [ -n "$SCAN_ERROR" ] || [ -n "$CHECKS_INCOMPLETE" ]; then
+  NOTE="NOT CHECKED. Required checks are incomplete: ${SCAN_ERROR:-}${SCAN_ERROR:+; }$CHECKS_INCOMPLETE."
   echo ""; echo "$NOTE"
-  if [ -n "$STDIN_JSON" ]; then emit_report 0; echo "$NOTE" >&2; exit 0; fi
+  if [ -n "$STDIN_JSON" ]; then emit_report 2; echo "$NOTE" >&2; exit 2; fi
   exit 1
 fi
 # A verdict line every time. Exit 0 with nothing scanned reads as a pass, so it is named and, run by hand, exits 1.
@@ -1743,7 +1792,7 @@ if [ -n "$UNCHECKED" ] || { [ "$ANY_NATIVE" -eq 0 ] && { [ "$ANY_WEB" -eq 0 ] ||
   elif [ "$ANY_NEEDS_NATIVE" -eq 1 ]; then NEXT="Next. This app has no ios or android folder yet. Run $NATIVE_HINT, then run the guard again."
   else NEXT="Next. Point the guard at the folder that holds your Xcode project or your Android app folder."; fi
   echo ""; echo "$NOTE"; echo "$NEXT"
-  if [ -n "$STDIN_JSON" ]; then emit_report 0; echo "$NOTE $NEXT" >&2; exit 0; fi
+  if [ -n "$STDIN_JSON" ]; then emit_report 2; echo "$NOTE $NEXT" >&2; exit 2; fi
   exit 1
 fi
 echo ""

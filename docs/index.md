@@ -7,8 +7,8 @@ description: How to avoid common App Store and Google Play rejections. Rejection
 
 **The short answer.** Many rejections trace back to a few documented causes. A demo account that does not work, a privacy declaration that does not match what the app and its SDKs really collect, missing in-app account deletion, digital goods sold outside in-app purchase, and an incomplete or placeholder build. This playbook maps documented rejection patterns to the rule behind each one and the fix, and ships a guard that flags selected risks in your project before you submit.
 
-- **117 rejection patterns** with the guideline, how to detect it in your code, and the fix.
-- **95 tracked deadlines** across 28 jurisdictions and platform scopes, including the EU AI Act, the Digital Services Act, COPPA and US state age laws.
+- **123 rejection patterns** with the guideline, how to detect it in your code, and the fix.
+- **107 tracked deadlines** across 30 jurisdictions and platform scopes, including the EU AI Act, the Digital Services Act, COPPA and US state age laws.
 - **A pre-submission guard** that runs locally or inside AI coding tools like Claude Code, Codex and Cursor.
 - Free to read. Source on [GitHub](https://github.com/TaigaShinohara/StoreGate).
 
@@ -58,8 +58,12 @@ More answers in the [full question index](questions.md) and the [Q&A discussions
 
 ```bash
 git clone https://github.com/TaigaShinohara/StoreGate ~/repositories/StoreGate
-bash ~/repositories/StoreGate/scripts/install.sh install
+bash ~/repositories/StoreGate/agent-os/hooks/storegate-guard.sh "/path/to/your/app"
 ```
+
+Replace `/path/to/your/app` with your app's folder. The scan does not install hooks or change your app. `BLOCKED` names critical findings to fix; `NOT CHECKED` means required checks did not finish; `CLEAR` means this static scan found no critical findings. Read high findings too, then complete the [pre-submission checklist](PRE-SUBMISSION-CHECKLIST.md) for the listing, runtime and account checks. A clean code scan does not approve a submission.
+
+For repeat scans before submit commands, optionally [install the hook for your AI coding tool](https://github.com/TaigaShinohara/StoreGate#install-it-into-your-ai-coding-tool).
 
 Maintained by [Mirza Iqbal](https://github.com/mjmirza). Not affiliated with Apple or Google. App Store is a trademark of Apple Inc. Google Play is a trademark of Google LLC.
 

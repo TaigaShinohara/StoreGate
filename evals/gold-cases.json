@@ -38,7 +38,7 @@
     },
     {
       "feature": "fleet",
-      "name": "high finding needs action",
+      "name": "high finding blocks release",
       "guard_exit": 0,
       "report": "  [HIGH]     IOS-ATS  Arbitrary loads\n      file. ios/App/Info.plist\n      fix. Remove it\n\nSummary. critical=0 high=1 medium=0\nCoverage. complete ios=1 android=0 web=0\n",
       "app": {
@@ -50,7 +50,7 @@
         }
       },
       "waivers": null,
-      "expect": "READY_WITH_ACTIONS",
+      "expect": "BLOCKED",
       "register": false
     },
     {

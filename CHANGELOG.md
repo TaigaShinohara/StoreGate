@@ -2,6 +2,17 @@
 
 All notable changes to this playbook are recorded here. The format follows Keep a Changelog, adapted to plain punctuation.
 
+## Unreleased
+
+### Fixed
+
+- Guard test shims no longer write through a symlink to a real executable. Objective-C++ source is scanned alongside Objective-C.
+- Android target SDK checks ignore comments, retain lower release variants, and report unresolved configuration as incomplete. Submit hooks refuse incomplete scans, including missing helpers.
+- Copilot repository installs include their own helper payload, verify a validator-only finding through the installed hooks, and preserve local payload edits in backups during updates. The guard excludes its own payload from app source checks.
+- Release reports retain finding messages, fixes and per-file or per-locale locations. Missing listing fields are reported, and static results are separated from manual verification. The report blocks critical/high findings and otherwise remains incomplete; it does not certify submission readiness.
+- Fleet Sweep blocks unresolved high findings as well as critical findings. Its template starts with unconfirmed owner answers and no attestations.
+- The website starts with an explicit app scan. README, skill and audit-command instructions distinguish that scan from optional installation and from a completed release review.
+
 ## 2.4.0 (2026-11-15)
 
 This release closes gaps found by a second survey of comparable open source repositories, a line by line read of the App Store Connect release notes, and an internal audit of the guard. Eight adversarial review rounds attacked the changes before release, and every reproduced bug became a test. The new findings are high or medium except the debuggable Android build, which Play refuses at upload, so nothing that passed 2.3.0 is blocked unless it carries a debuggable release manifest. It is a minor version.

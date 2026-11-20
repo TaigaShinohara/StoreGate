@@ -20,7 +20,10 @@ fresh
 OUT="$(run)"; RC=$?
 [ "$RC" -eq 0 ] && ok "fresh install exits 0" || bad "fresh install exits 0 (rc=$RC)"
 [ -x "$C/hooks/storegate-guard.sh" ] && ok "guard is installed and executable" || bad "guard is installed and executable"
-for p in SKILL.md data/rejection-patterns.json data/regulatory-deadlines.json docs/APPLE.md references scripts/deadline-checker.py scripts/validate-privacy-manifest.py templates .citation-allowlist; do
+CANONICAL_GUARD="$(cd "$C/hooks" && pwd -P)/storegate-guard.sh"
+awk -F '\t' -v path="$CANONICAL_GUARD" 'NF == 2 && $1 == "claude" && $2 == path { found=1 } END { exit !found }' "$C/skills/app-store-compliance/.guards" \
+  && ok "custom Claude install records the exact guard path in its nearby skill" || bad "custom Claude install records guard ownership"
+for p in SKILL.md data/rejection-patterns.json data/regulatory-deadlines.json docs/APPLE.md references scripts/deadline-checker.py scripts/validate-privacy-manifest.py scripts/android-target-sdk.py templates .citation-allowlist; do
   [ -e "$C/skills/app-store-compliance/$p" ] || { bad "skill payload has $p"; continue; }
 done
 [ -e "$C/skills/app-store-compliance/.citation-allowlist" ] && ok "skill payload is complete, allowlist included" || bad "skill payload is complete, allowlist included"
@@ -32,8 +35,12 @@ echo "$OUT" | grep -q "bash .*storegate-guard.sh /path/to/your/app" && ok "insta
 
 # 2 running it again changes nothing and adds no second entry
 BEFORE="$(cat "$C/settings.json")"
+printf 'other-tool\t/private/other/guard.sh\n' >> "$C/skills/app-store-compliance/.guards"
 run >/dev/null; RC=$?
 [ "$RC" -eq 0 ] && [ "$(hooks)" = "1" ] && [ "$BEFORE" = "$(cat "$C/settings.json")" ] && ok "a second run is idempotent" || bad "a second run is idempotent (rc=$RC entries=$(hooks))"
+[ "$(awk -F '\t' '$1 == "claude" { n++ } END { print n+0 }' "$C/skills/app-store-compliance/.guards")" = 1 ] \
+  && grep -q '/private/other/guard.sh' "$C/skills/app-store-compliance/.guards" \
+  && ok "a Claude reinstall keeps one ownership record and preserves other records" || bad "a Claude reinstall preserves ownership records"
 
 # 3 existing settings survive, and a backup is written
 fresh
@@ -61,6 +68,31 @@ run doctor >/dev/null; RC=$?
 run >/dev/null
 OUT="$(run doctor)"; RC=$?
 [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "^Install verified\." && ok "doctor passes after an install" || bad "doctor passes after an install (rc=$RC)"
+echo "$OUT" | grep -q 'blocks the validator-only privacy manifest fixture' && ok "doctor proves the manifest validator through the installed hook" || bad "doctor proves the manifest validator through the installed hook"
+# A standalone installed guard must find its owned nearby payload without the install-time override.
+FX="$WORK/owned-nearby-app"; mkdir -p "$FX"
+printf '<plist><dict><key>ITSAppUsesNonExemptEncryption</key><false/></dict></plist>' > "$FX/Info.plist"
+printf 'import Foundation\nlet privacyPolicy = "https://example.com/privacy"\n' > "$FX/App.swift"
+printf '<plist><dict><key>NSPrivacyTracking</key><false/><key>NSPrivacyCollectedDataTypes</key><array/><key>NSPrivacyAccessedAPITypes</key><array/></dict></plist>' > "$FX/PrivacyInfo.xcprivacy"
+OUT="$(env -u CLAUDE_CONFIG_DIR bash "$C/hooks/storegate-guard.sh" "$FX" 2>&1)"; RC=$?
+[ "$RC" -eq 2 ] && echo "$OUT" | grep -q 'APPLE-MANIFEST-API-TYPES-EMPTY' \
+  && ok "custom Claude guard finds its owned payload without CLAUDE_CONFIG_DIR" || bad "custom Claude guard finds its payload without the config override (rc=$RC)"
+cp "$C/skills/app-store-compliance/.guards" "$WORK/claude-guards"
+printf 'claude\t/another/config/hooks/storegate-guard.sh\n' > "$C/skills/app-store-compliance/.guards"
+OUT="$(env -u CLAUDE_CONFIG_DIR bash "$C/hooks/storegate-guard.sh" "$FX" 2>&1)"; RC=$?
+[ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'APPLE-MANIFEST-VALIDATOR-UNAVAILABLE' && ! echo "$OUT" | grep -q 'APPLE-MANIFEST-API-TYPES-EMPTY' \
+  && ok "custom Claude guard rejects a nearby payload owned by another guard" || bad "custom Claude guard rejects another guard's nearby payload (rc=$RC)"
+mv "$WORK/claude-guards" "$C/skills/app-store-compliance/.guards"
+mv "$C/skills/app-store-compliance/scripts/android-target-sdk.py" "$WORK/android-target-sdk.py"
+run doctor >/dev/null; RC=$?
+[ "$RC" -eq 1 ] && ok "doctor rejects a payload without the Android SDK helper" || bad "doctor rejects a payload without the Android SDK helper (rc=$RC)"
+mv "$WORK/android-target-sdk.py" "$C/skills/app-store-compliance/scripts/android-target-sdk.py"
+cp "$C/skills/app-store-compliance/scripts/validate-privacy-manifest.py" "$WORK/validate-privacy-manifest.py"
+printf '#!/usr/bin/env python3\nraise SystemExit(0)\n' > "$C/skills/app-store-compliance/scripts/validate-privacy-manifest.py"
+OUT="$(run doctor)"; RC=$?
+[ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'did not block and report the validator-only' \
+  && ok "doctor rejects a manifest validator that silently skips findings" || bad "doctor rejects a no-op manifest validator (rc=$RC)"
+mv "$WORK/validate-privacy-manifest.py" "$C/skills/app-store-compliance/scripts/validate-privacy-manifest.py"
 
 # 7 doctor notices a guard that was edited or is stale
 printf '\n# local edit\n' >> "$C/hooks/storegate-guard.sh"
@@ -142,7 +174,9 @@ if command -v jq >/dev/null 2>&1; then
   printf '{"model":"opus","hooks":{"Stop":[]}}' > "$C/settings.json"
   OUT="$(PATH="$SHIM" CLAUDE_CONFIG_DIR="$C" bash "$INSTALL" 2>&1)"; RC=$?
   PATH="$SHIM" CLAUDE_CONFIG_DIR="$C" bash "$INSTALL" >/dev/null 2>&1
-  [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "^Install verified\." && [ "$(hooks)" = "1" ] && grep -q '"opus"' "$C/settings.json" && ok "with jq only the hook is merged once and verified" || bad "with jq only the hook is merged once and verified (rc=$RC entries=$(hooks))"
+  [ "$RC" -eq 0 ] && echo "$OUT" | grep -q 'Installed, but not fully verified' && ! echo "$OUT" | grep -q '^Install verified' \
+    && echo "$OUT" | grep -q 'Android target SDK resolution, privacy manifest validation and deadline checks' \
+    && [ "$(hooks)" = "1" ] && grep -q '"opus"' "$C/settings.json" && ok "with jq only the hook is merged once and its missing Python checks are explicit" || bad "with jq only the hook is merged once and reported as partly verified (rc=$RC entries=$(hooks))"
   # jq keeps only the last of two repeated keys, so a repeated key must stop the jq path too
   for body in '{"permissions":{"deny":["Bash(*)"]},"permissions":{"allow":["Bash(*)"]}}' '{"hooks":{"PreToolUse":[]},"a":{"b":1,"b":2}}'; do
     fresh; printf '%s' "$body" > "$C/settings.json"

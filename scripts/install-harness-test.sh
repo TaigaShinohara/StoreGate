@@ -295,14 +295,137 @@ sys.exit(0 if (b + ".gemini" + b) in t["prompt"] else 1)
 
 # 2e Copilot in the app repository (cloud agent, JetBrains, VS Code workspace)
 fresh; APPR="$WORK/apprepo$RANDOM"; mkdir -p "$APPR"
+printf '<plist><dict><key>ITSAppUsesNonExemptEncryption</key><false/></dict></plist>' > "$APPR/Info.plist"
+printf 'import Foundation\nlet privacyPolicy = "https://example.com/privacy"\n' > "$APPR/App.swift"
+BASELINE="$(env HOME="$H" bash agent-os/hooks/storegate-guard.sh "$APPR" 2>&1 | grep -E '^  \[(CRITICAL|HIGH|MEDIUM)\]|^Summary\.|^Coverage\.|^Platforms\.')"
 OUT="$(run --tool copilot-repo)"; RC=$?
 [ "$RC" -eq 2 ] && echo "$OUT" | grep -q "Pass --repo" && ok "copilot-repo without --repo exits 2 and says what to pass" || bad "copilot-repo without --repo exits 2 (rc=$RC)"
 OUT="$(run --tool copilot-repo --repo "$APPR")"; RC=$?
 [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "^Install verified\." && [ -x "$APPR/.github/hooks/storegate-guard.sh" ] \
   && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["hooks"]["preToolUse"][0]["bash"]=="bash ./.github/hooks/storegate-guard.sh" else 1)' "$APPR/.github/hooks/app-store-compliance.json" \
   && [ ! -e "$H/.agents" ] && ok "copilot-repo writes a relative hook into the repository and nothing in HOME" || { bad "copilot-repo writes a relative hook into the repository (rc=$RC)"; echo "$OUT" | tail -8; }
+AFTER="$(env HOME="$H" bash "$APPR/.github/hooks/storegate-guard.sh" "$APPR" 2>&1 | grep -E '^  \[(CRITICAL|HIGH|MEDIUM)\]|^Summary\.|^Coverage\.|^Platforms\.')"
+[ -n "$BASELINE" ] && [ "$BASELINE" = "$AFTER" ] \
+  && ok "copilot-repo payload does not change findings or coverage for its app" || bad "copilot-repo payload does not change the app scan"
+RP="$APPR/.github/hooks/storegate"
+for p in scripts/validate-privacy-manifest.py scripts/android-target-sdk.py scripts/deadline-checker.py data/regulatory-deadlines.json docs/PRE-SUBMISSION-CHECKLIST.md .storegate-owned-files.json; do
+  [ -f "$RP/$p" ] && ok "copilot-repo includes $p" || bad "copilot-repo includes $p"
+done
+OUT="$(run --tool copilot-repo --repo "$APPR" doctor)"; RC=$?
+[ "$RC" -eq 0 ] && echo "$OUT" | grep -q 'validator-only privacy manifest fixture' \
+  && ok "copilot-repo doctor proves the validator-only fixture through the registered hook" || bad "copilot-repo doctor proves the validator-only fixture (rc=$RC)"
+for p in scripts/validate-privacy-manifest.py scripts/android-target-sdk.py data/regulatory-deadlines.json; do
+  mv "$RP/$p" "$WORK/missing-payload"
+  OUT="$(run --tool copilot-repo --repo "$APPR" doctor)"; RC=$?
+  [ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'payload is incomplete' \
+    && ok "copilot-repo doctor rejects missing $p" || bad "copilot-repo doctor rejects missing $p (rc=$RC)"
+  mv "$WORK/missing-payload" "$RP/$p"
+done
+mv "$RP" "$WORK/repo-payload"
+run --tool copilot-repo --repo "$APPR" doctor >/dev/null; RC=$?
+[ "$RC" -eq 1 ] && ok "copilot-repo doctor rejects a guard-only legacy install" || bad "copilot-repo doctor rejects a guard-only legacy install (rc=$RC)"
+mv "$WORK/repo-payload" "$RP"
+cp "$RP/scripts/validate-privacy-manifest.py" "$WORK/manifest-validator.py"
+printf '#!/usr/bin/env python3\nraise SystemExit(0)\n' > "$RP/scripts/validate-privacy-manifest.py"
+OUT="$(run --tool copilot-repo --repo "$APPR" doctor)"; RC=$?
+[ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'did not block and report the validator-only' \
+  && ok "copilot-repo doctor detects a validator that silently skips the critical manifest" || bad "copilot-repo doctor detects a no-op validator (rc=$RC)"
+mv "$WORK/manifest-validator.py" "$RP/scripts/validate-privacy-manifest.py"
+# The checkout and both installed Copilot payload forms must find the same validator-only critical rule.
+env HOME="$H" python3 - "$APPR" <<'PY'
+import json, os, shutil, subprocess, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, "scripts")
+import install_harness as h
+app = h.sample_app()
+try:
+    checkout = subprocess.run(["bash", "agent-os/hooks/storegate-guard.sh", app], capture_output=True, text=True)
+    assert checkout.returncode == 2 and h.MANIFEST_FIXTURE_RULE in checkout.stdout + checkout.stderr
+    config = json.load(open(os.path.join(sys.argv[1], ".github", "hooks", "app-store-compliance.json")))
+    for event, style in h.events("copilot-repo"):
+        entry = config["hooks"][event][0]
+        line = entry.get("bash") or entry["command"]
+        rc, out = h.run_hook(line, h.payload_for("copilot-repo", style, h.SUBMIT, app), sys.argv[1])
+        assert rc == 2 and h.MANIFEST_FIXTURE_RULE in out, (event, rc, out)
+finally:
+    shutil.rmtree(app)
+PY
+[ "$?" -eq 0 ] && ok "copilot-repo and checkout agree on the manifest-only critical in both hook formats" || bad "copilot-repo and checkout agree on the manifest-only critical"
+# Reinstall updates owned files while keeping user content and the unchanged hook config.
+printf 'user payload note\n' > "$RP/scripts/user-note.txt"
+printf '# local guard comment\n' >> "$APPR/.github/hooks/storegate-guard.sh"
+printf '# local validator edit\n' >> "$RP/scripts/validate-privacy-manifest.py"
+python3 - "$RP" <<'PY'
+import hashlib, json, os, sys
+root = sys.argv[1]
+p = os.path.join(root, ".storegate-owned-files.json")
+d = json.load(open(p))
+for name in ("retired-helper.py", "retired-edited-helper.py"):
+    content = b"# retired StoreGate helper\n"
+    relative = "scripts/" + name
+    d["files"][relative] = hashlib.sha256(content).hexdigest()
+    with open(os.path.join(root, relative), "wb") as f:
+        f.write(content + (b"# user edit\n" if "edited" in name else b""))
+json.dump(d, open(p, "w"))
+PY
+BEFORE="$(cat "$APPR/.github/hooks/app-store-compliance.json")"
+run --tool copilot-repo --repo "$APPR" >/dev/null; RC=$?
+[ "$RC" -eq 0 ] && [ "$BEFORE" = "$(cat "$APPR/.github/hooks/app-store-compliance.json")" ] \
+  && cmp -s "$RP/scripts/validate-privacy-manifest.py" scripts/validate-privacy-manifest.py \
+  && cmp -s "$APPR/.github/hooks/storegate-guard.sh" agent-os/hooks/storegate-guard.sh \
+  && [ "$(cat "$RP/scripts/user-note.txt")" = 'user payload note' ] \
+  && [ ! -e "$RP/scripts/retired-helper.py" ] && grep -q 'user edit' "$RP/scripts/retired-edited-helper.py" \
+  && ok "copilot-repo reinstall repairs its payload, keeps user files and adds no duplicate hook" || bad "copilot-repo reinstall repairs its payload safely (rc=$RC)"
+VALIDATOR_BACKUP="$(grep -l '# local validator edit' "$RP"/scripts/validate-privacy-manifest.py.bak-* 2>/dev/null | head -1)"
+GUARD_BACKUP="$(grep -l '# local guard comment' "$APPR"/.github/hooks/storegate-guard.sh.bak-* 2>/dev/null | head -1)"
+[ -n "$VALIDATOR_BACKUP" ] && [ -n "$GUARD_BACKUP" ] \
+  && ok "copilot-repo reinstall backs up local edits before refreshing distributed files" || bad "copilot-repo reinstall preserves local guard and validator edits"
+# Uninstall preserves other hook entries, their settings backups, untracked payload files and local edits.
+python3 - "$APPR/.github/hooks/app-store-compliance.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["user_setting"] = "kept"
+d["hooks"]["preToolUse"].append({"type": "command", "bash": "echo user-hook"})
+json.dump(d, open(p, "w"))
+PY
+printf '# user-modified reference\n' >> "$RP/docs/PRE-SUBMISSION-CHECKLIST.md"
 run --tool copilot-repo --repo "$APPR" uninstall >/dev/null
-[ ! -e "$APPR/.github/hooks/app-store-compliance.json" ] && [ ! -e "$APPR/.github/hooks/storegate-guard.sh" ] && ok "copilot-repo uninstall removes both files" || bad "copilot-repo uninstall removes both files"
+[ ! -e "$APPR/.github/hooks/storegate-guard.sh" ] && [ ! -e "$RP/scripts/validate-privacy-manifest.py" ] \
+  && [ ! -e "$RP/.storegate-owned-files.json" ] && [ -f "$RP/scripts/user-note.txt" ] \
+  && [ -f "$VALIDATOR_BACKUP" ] && [ -f "$GUARD_BACKUP" ] \
+  && grep -q 'user-modified reference' "$RP/docs/PRE-SUBMISSION-CHECKLIST.md" \
+  && grep -q 'user-hook' "$APPR/.github/hooks/app-store-compliance.json" \
+  && ls "$APPR/.github/hooks"/app-store-compliance.json.bak-* >/dev/null 2>&1 \
+  && ok "copilot-repo uninstall removes owned payload and keeps user files, other hooks and backups" || bad "copilot-repo uninstall preserves user files and other hooks"
+fresh; APPR="$WORK/legacy-apprepo$RANDOM"; mkdir -p "$APPR/.github/hooks/storegate/scripts"
+cp agent-os/hooks/storegate-guard.sh "$APPR/.github/hooks/storegate-guard.sh"
+printf 'legacy user file\n' > "$APPR/.github/hooks/storegate/scripts/custom.py"
+printf '# user SDK helper\n' > "$APPR/.github/hooks/storegate/scripts/android-target-sdk.py"
+printf 'user bookkeeping note\n' > "$APPR/.github/hooks/storegate/.storegate-owned-files.json"
+printf '{"version":1,"hooks":{"preToolUse":[{"type":"command","bash":"bash ./.github/hooks/storegate-guard.sh"}]}}\n' > "$APPR/.github/hooks/app-store-compliance.json"
+run --tool copilot-repo --repo "$APPR" >/dev/null; RC=$?
+[ "$RC" -eq 0 ] && [ -f "$APPR/.github/hooks/storegate/scripts/custom.py" ] \
+  && grep -q '# user SDK helper' "$APPR"/.github/hooks/storegate/scripts/android-target-sdk.py.bak-* \
+  && grep -q 'user bookkeeping note' "$APPR"/.github/hooks/storegate/.storegate-owned-files.json.bak-* \
+  && ok "copilot-repo upgrades a legacy guard-only install without replacing user directories" || bad "copilot-repo upgrades a legacy install (rc=$RC)"
+run --tool copilot-repo --repo "$APPR" uninstall >/dev/null
+[ ! -e "$APPR/.github/hooks/app-store-compliance.json" ] && [ ! -e "$APPR/.github/hooks/storegate-guard.sh" ] \
+  && [ "$(cat "$APPR/.github/hooks/storegate/scripts/custom.py")" = 'legacy user file' ] \
+  && ok "copilot-repo legacy uninstall keeps files it did not install" || bad "copilot-repo legacy uninstall keeps user files"
+# A private payload symlink must never redirect install or uninstall into another directory.
+fresh; APPR="$WORK/symlink-apprepo$RANDOM"; mkdir -p "$APPR/.github/hooks" "$WORK/user-payload"
+printf 'private user contents\n' > "$WORK/user-payload/keep.txt"
+ln -s "$WORK/user-payload" "$APPR/.github/hooks/storegate"
+OUT="$(run --tool copilot-repo --repo "$APPR")"; RC=$?
+[ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'must not be a symlink' \
+  && [ "$(cat "$WORK/user-payload/keep.txt")" = 'private user contents' ] \
+  && [ "$(find "$WORK/user-payload" -type f | wc -l | tr -d ' ')" = 1 ] \
+  && [ ! -e "$APPR/.github/hooks/storegate-guard.sh" ] \
+  && ok "copilot-repo refuses a symlinked private payload without editing its target" || bad "copilot-repo refuses a symlinked payload (rc=$RC)"
+run --tool copilot-repo --repo "$APPR" uninstall >/dev/null
+[ -L "$APPR/.github/hooks/storegate" ] && [ "$(cat "$WORK/user-payload/keep.txt")" = 'private user contents' ] \
+  && ok "copilot-repo uninstall leaves a symlinked payload and its target intact" || bad "copilot-repo uninstall preserves a symlink target"
 
 # 3 existing settings survive and get a backup (Gemini keeps ide and security, Codex keeps its other hooks)
 fresh; mkdir -p "$H/.gemini" "$H/.codex"

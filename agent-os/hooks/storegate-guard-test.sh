@@ -29,7 +29,7 @@ mk_ios_clean() {
 mk_android_bad() {
   local d; d="$(mktemp -d)"; mkdir -p "$d/app/src/main"
   printf '<manifest><uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/></manifest>' > "$d/app/src/main/AndroidManifest.xml"
-  printf 'android { defaultConfig { targetSdkVersion 30 } }\n' > "$d/app/build.gradle"
+  printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdkVersion 30 } }\n' > "$d/app/build.gradle"
   echo "$d"
 }
 
@@ -65,7 +65,7 @@ mk_ios_bad_nutrition() {
 mk_android_bad_privacy() {
   local d; d="$(mktemp -d)"; mkdir -p "$d/app/src/main"
   printf '<manifest xmlns:android="http://schemas.android.com/apk/res/android"><uses-permission android:name="com.google.android.gms.permission.AD_ID"/><uses-permission android:name="android.permission.READ_STEPS"/><uses-permission android:name="android.permission.READ_CONTACTS"/></manifest>' > "$d/app/src/main/AndroidManifest.xml"
-  printf 'android { defaultConfig { targetSdkVersion 34 } }\n' > "$d/app/build.gradle"
+  printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdkVersion 34 } }\n' > "$d/app/build.gradle"
   printf 'class MyActivity { void test() { requestPermissions(new String[]{"camera"}, 1); HealthConnectClient client = null; contacts = "john"; } }\n' > "$d/app/src/main/MyActivity.java"
   echo "$d"
 }
@@ -129,6 +129,7 @@ mk_flutter_android_only() {
   printf 'name: t\ndependencies:\n  permission_handler: ^11.0.0\n' > "$d/pubspec.yaml"
   printf "import 'package:permission_handler/permission_handler.dart';\nvoid main(){Permission.camera.request();}\n" > "$d/lib/main.dart"
   printf '<manifest xmlns:android="http://schemas.android.com/apk/res/android"></manifest>' > "$d/android/app/src/main/AndroidManifest.xml"
+  printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdk 36 } }\n' > "$d/android/app/build.gradle"
   echo "$d"
 }
 
@@ -157,6 +158,7 @@ mk_flutter_both_platforms() {
   printf "import 'package:permission_handler/permission_handler.dart';\nvoid main(){Permission.camera.request();}\n" > "$d/lib/main.dart"
   printf '<plist><dict></dict></plist>' > "$d/ios/Runner/Info.plist"
   printf '<manifest xmlns:android="http://schemas.android.com/apk/res/android"></manifest>' > "$d/android/app/src/main/AndroidManifest.xml"
+  printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdk 36 } }\n' > "$d/android/app/build.gradle"
   echo "$d"
 }
 
@@ -360,7 +362,7 @@ rm -rf "$D"
 # 27 Donation link to a funding platform fires the Payments-policy finding on an Android tree
 D="$(mktemp -d)"; mkdir -p "$D/app/src/main/java/t"
 printf '<manifest package="t"/>' > "$D/app/src/main/AndroidManifest.xml"
-printf 'android { defaultConfig { targetSdkVersion 36 } }\n' > "$D/app/build.gradle"
+printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdkVersion 36 } }\n' > "$D/app/build.gradle"
 printf 'val donate = "https://opencollective.com/example/donate"\n' > "$D/app/src/main/java/t/Src.kt"
 OUT="$(bash "$GUARD" "$D" 2>&1)"
 echo "$OUT" | grep -q 'GOOGLE-PAYMENTS-DONATION-LINK' && ok "Open Collective donate link fires the Payments finding" || bad "Open Collective donate link fires the Payments finding"
@@ -369,7 +371,7 @@ rm -rf "$D"
 # 28 Play billing with no refund-review handling surfaces the chargeback-liability finding
 D="$(mktemp -d)"; mkdir -p "$D/app/src/main/java/t"
 printf '<manifest package="t"/>' > "$D/app/src/main/AndroidManifest.xml"
-printf 'android { defaultConfig { targetSdkVersion 36 } }\n' > "$D/app/build.gradle"
+printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdkVersion 36 } }\n' > "$D/app/build.gradle"
 printf 'import com.android.billingclient.api.BillingClient\nval c = BillingClient.newBuilder(ctx)\n' > "$D/app/src/main/java/t/Src.kt"
 OUT="$(bash "$GUARD" "$D" 2>&1)"
 echo "$OUT" | grep -q 'GOOGLE-PLAY-CHARGEBACK-LIABILITY' && ok "Play billing without ReviewRefund handling surfaces chargeback liability" || bad "Play billing without ReviewRefund handling surfaces chargeback liability"
@@ -378,7 +380,7 @@ rm -rf "$D"
 # 29 Play billing WITH refund-review handling stays silent on the chargeback finding
 D="$(mktemp -d)"; mkdir -p "$D/app/src/main/java/t"
 printf '<manifest package="t"/>' > "$D/app/src/main/AndroidManifest.xml"
-printf 'android { defaultConfig { targetSdkVersion 36 } }\n' > "$D/app/build.gradle"
+printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdkVersion 36 } }\n' > "$D/app/build.gradle"
 printf 'import com.android.billingclient.api.BillingClient\nfun onRtdn(n: PendingRefundReviewNotification) { reviewRefund(n) }\n' > "$D/app/src/main/java/t/Src.kt"
 OUT="$(bash "$GUARD" "$D" 2>&1)"
 echo "$OUT" | grep -Eq '^  \[(CRITICAL|HIGH|MEDIUM)\] +GOOGLE-PLAY-CHARGEBACK-LIABILITY ' && bad "Play billing with ReviewRefund handling stays silent" || ok "Play billing with ReviewRefund handling stays silent"
@@ -435,7 +437,7 @@ rm -rf "$D"
 # 36 READ_CONTACTS on an API 37 target fires the contact-picker finding
 D="$(mktemp -d)"; mkdir -p "$D/app/src/main/java/t"
 printf '<manifest package="t"/>' > "$D/app/src/main/AndroidManifest.xml"
-printf 'android { defaultConfig { targetSdkVersion 37 } buildTypes { release { minifyEnabled true } } }\n' > "$D/app/build.gradle"
+printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdkVersion 37 } buildTypes { release { minifyEnabled true } } }\n' > "$D/app/build.gradle"
 printf 'val p = "android.permission.READ_CONTACTS"\n' > "$D/app/src/main/java/t/Src.kt"
 OUT="$(bash "$GUARD" "$D" 2>&1)"
 echo "$OUT" | grep -q 'GOOGLE-CONTACTS-PICKER-REQUIRED' && ok "READ_CONTACTS at API 37 fires contact-picker finding" || bad "READ_CONTACTS at API 37 fires contact-picker finding"
@@ -444,7 +446,7 @@ rm -rf "$D"
 # 37 READ_CONTACTS on an API 36 target stays silent on the API 37 finding
 D="$(mktemp -d)"; mkdir -p "$D/app/src/main/java/t"
 printf '<manifest package="t"/>' > "$D/app/src/main/AndroidManifest.xml"
-printf 'android { defaultConfig { targetSdkVersion 36 } buildTypes { release { minifyEnabled true } } }\n' > "$D/app/build.gradle"
+printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdkVersion 36 } buildTypes { release { minifyEnabled true } } }\n' > "$D/app/build.gradle"
 printf 'val p = "android.permission.READ_CONTACTS"\n' > "$D/app/src/main/java/t/Src.kt"
 OUT="$(bash "$GUARD" "$D" 2>&1)"
 echo "$OUT" | grep -Eq '^  \[(CRITICAL|HIGH|MEDIUM)\] +GOOGLE-CONTACTS-PICKER-REQUIRED ' && bad "READ_CONTACTS at API 36 stays silent on the API 37 finding" || ok "READ_CONTACTS at API 36 stays silent on the API 37 finding"
@@ -453,7 +455,7 @@ rm -rf "$D"
 # 38 Local network discovery on API 37 without ACCESS_LOCAL_NETWORK fires
 D="$(mktemp -d)"; mkdir -p "$D/app/src/main/java/t"
 printf '<manifest package="t"/>' > "$D/app/src/main/AndroidManifest.xml"
-printf 'android { defaultConfig { targetSdkVersion 37 } buildTypes { release { minifyEnabled true } } }\n' > "$D/app/build.gradle"
+printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdkVersion 37 } buildTypes { release { minifyEnabled true } } }\n' > "$D/app/build.gradle"
 printf 'val nsd = getSystemService(NsdManager::class.java)\n' > "$D/app/src/main/java/t/Src.kt"
 OUT="$(bash "$GUARD" "$D" 2>&1)"
 echo "$OUT" | grep -q 'ANDROID-LOCAL-NETWORK-PERMISSION' && ok "NsdManager at API 37 without ACCESS_LOCAL_NETWORK fires" || bad "NsdManager at API 37 without ACCESS_LOCAL_NETWORK fires"
@@ -462,7 +464,7 @@ rm -rf "$D"
 # 39 Foreground service used for geofencing fires
 D="$(mktemp -d)"; mkdir -p "$D/app/src/main/java/t"
 printf '<manifest package="t"/>' > "$D/app/src/main/AndroidManifest.xml"
-printf 'android { defaultConfig { targetSdkVersion 36 } buildTypes { release { minifyEnabled true } } }\n' > "$D/app/build.gradle"
+printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdkVersion 36 } buildTypes { release { minifyEnabled true } } }\n' > "$D/app/build.gradle"
 printf 'val perm = "android.permission.FOREGROUND_SERVICE_LOCATION"; fun geofenceLoop() {}\n' > "$D/app/src/main/java/t/Src.kt"
 OUT="$(bash "$GUARD" "$D" 2>&1)"
 echo "$OUT" | grep -q 'GOOGLE-FGS-GEOFENCE-REMOVED' && ok "FGS geofencing fires" || bad "FGS geofencing fires"
@@ -471,7 +473,7 @@ rm -rf "$D"
 # 40 Random chat app without minor blocking fires critical
 D="$(mktemp -d)"; mkdir -p "$D/app/src/main/java/t"
 printf '<manifest package="t"/>' > "$D/app/src/main/AndroidManifest.xml"
-printf 'android { defaultConfig { targetSdkVersion 36 } buildTypes { release { minifyEnabled true } } }\n' > "$D/app/build.gradle"
+printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdkVersion 36 } buildTypes { release { minifyEnabled true } } }\n' > "$D/app/build.gradle"
 printf 'val tagline = "random chat with strangers"\n' > "$D/app/src/main/java/t/Src.kt"
 OUT="$(bash "$GUARD" "$D" 2>&1)"
 echo "$OUT" | grep -q 'GOOGLE-ANON-CHAT-MINOR-BLOCK' && ok "Random chat without minor blocking fires" || bad "Random chat without minor blocking fires"
@@ -480,9 +482,9 @@ rm -rf "$D"
 # 41 Release build without minifyEnabled true fires the R8 finding
 D="$(mktemp -d)"; mkdir -p "$D/app/src/main/java/t"
 printf '<manifest package="t"/>' > "$D/app/src/main/AndroidManifest.xml"
-printf 'android { defaultConfig { targetSdkVersion 36 } buildTypes { release { minifyEnabled true } } }\n' > "$D/app/build.gradle"
+printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdkVersion 36 } buildTypes { release { minifyEnabled true } } }\n' > "$D/app/build.gradle"
 printf 'val x = 1\n' > "$D/app/src/main/java/t/Src.kt"
-printf 'android { defaultConfig { targetSdkVersion 36 } buildTypes { release { minifyEnabled false } } }\n' > "$D/app/build.gradle"
+printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdkVersion 36 } buildTypes { release { minifyEnabled false } } }\n' > "$D/app/build.gradle"
 OUT="$(bash "$GUARD" "$D" 2>&1)"
 echo "$OUT" | grep -q 'ANDROID-R8-OPTIMIZATION-MISSING' && ok "Missing R8 minify fires" || bad "Missing R8 minify fires"
 rm -rf "$D"
@@ -602,7 +604,7 @@ rm -rf "$D"
 mk_android_perm() {
   local d; d="$(mktemp -d)"; mkdir -p "$d/android/app/src/main"
   printf '<manifest xmlns:android="http://schemas.android.com/apk/res/android"><uses-permission android:name="android.permission.INTERNET"/>%s</manifest>' "$1" > "$d/android/app/src/main/AndroidManifest.xml"
-  printf 'android { compileSdk 36 }\n' > "$d/android/app/build.gradle"
+  printf 'plugins { id("com.android.application") }\nandroid { compileSdk 36; defaultConfig { targetSdk 36 } }\n' > "$d/android/app/build.gradle"
   echo "$d"
 }
 D="$(mk_android_perm '')"
@@ -626,10 +628,10 @@ rm -rf "$D"
 # 57 targetSdk lives two levels down in every real project. The old ** glob never read android/app/build.gradle
 D="$(mktemp -d)"; mkdir -p "$D/android/app/src/main"
 printf '<manifest package="t"/>' > "$D/android/app/src/main/AndroidManifest.xml"
-printf 'android { defaultConfig { targetSdkVersion 35 } buildTypes { release { minifyEnabled true } } }\n' > "$D/android/app/build.gradle"
+printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdkVersion 35 } buildTypes { release { minifyEnabled true } } }\n' > "$D/android/app/build.gradle"
 OUT="$(bash "$GUARD" "$D" 2>&1)"
 echo "$OUT" | grep -Eq '^ +\[CRITICAL\] +GOOGLE-TARGET-API ' && ok "targetSdk 35 two levels deep fires the API 36 floor" || bad "targetSdk 35 two levels deep fires the API 36 floor"
-printf 'android { defaultConfig { targetSdk = 36 } buildTypes { release { isMinifyEnabled = true } } }\n' > "$D/android/app/build.gradle"
+printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdk = 36 } buildTypes { release { isMinifyEnabled = true } } }\n' > "$D/android/app/build.gradle"
 OUT="$(bash "$GUARD" "$D" 2>&1)"
 echo "$OUT" | grep -Eq '^ +\[CRITICAL\] +GOOGLE-TARGET-API ' && bad "targetSdk 36 stays silent" || ok "targetSdk 36 stays silent"
 rm -rf "$D"
@@ -637,7 +639,7 @@ rm -rf "$D"
 # 58 Play Billing Library 7 dependency fires the v8 floor, 8 stays silent
 D="$(mktemp -d)"; mkdir -p "$D/app/src/main/java/t"
 printf '<manifest package="t"/>' > "$D/app/src/main/AndroidManifest.xml"
-printf 'android { defaultConfig { targetSdkVersion 36 } buildTypes { release { minifyEnabled true } } }\ndependencies { implementation "com.android.billingclient:billing-ktx:7.1.1" }\n' > "$D/app/build.gradle"
+printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdkVersion 36 } buildTypes { release { minifyEnabled true } } }\ndependencies { implementation "com.android.billingclient:billing-ktx:7.1.1" }\n' > "$D/app/build.gradle"
 printf 'val c = BillingClient.newBuilder(ctx)\n' > "$D/app/src/main/java/t/Pay.kt"
 OUT="$(bash "$GUARD" "$D" 2>&1)"
 echo "$OUT" | grep -Eq '^ +\[CRITICAL\] +GOOGLE-PLAY-BILLING-V8-REQUIRED ' && ok "Billing Library 7 fires the v8 floor" || bad "Billing Library 7 fires the v8 floor"
@@ -649,7 +651,7 @@ rm -rf "$D"
 # 59 READ_MEDIA_IMAGES without the photo picker surfaces the declaration, with the picker it stays silent
 D="$(mktemp -d)"; mkdir -p "$D/app/src/main/java/t"
 printf '<manifest><uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/></manifest>' > "$D/app/src/main/AndroidManifest.xml"
-printf 'android { defaultConfig { targetSdkVersion 36 } buildTypes { release { minifyEnabled true } } }\n' > "$D/app/build.gradle"
+printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdkVersion 36 } buildTypes { release { minifyEnabled true } } }\n' > "$D/app/build.gradle"
 OUT="$(bash "$GUARD" "$D" 2>&1)"
 echo "$OUT" | grep -q 'GOOGLE-PHOTO-VIDEO-PERMISSIONS-DECLARATION' && ok "READ_MEDIA_IMAGES without a picker surfaces the declaration" || bad "READ_MEDIA_IMAGES without a picker surfaces the declaration"
 printf 'val p = registerForActivityResult(PickVisualMedia()) {}\n' > "$D/app/src/main/java/t/Pick.kt"
@@ -660,7 +662,7 @@ rm -rf "$D"
 # 60 an AccountManager import with no declared permission is not a data-collection signal
 D="$(mktemp -d)"; mkdir -p "$D/app/src/main/java/t"
 printf '<manifest><uses-permission android:name="android.permission.INTERNET"/></manifest>' > "$D/app/src/main/AndroidManifest.xml"
-printf 'android { defaultConfig { targetSdkVersion 36 } buildTypes { release { minifyEnabled true } } }\n' > "$D/app/build.gradle"
+printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdkVersion 36 } buildTypes { release { minifyEnabled true } } }\n' > "$D/app/build.gradle"
 printf 'import android.accounts.AccountManager\n// ContactsContract is not used here\n' > "$D/app/src/main/java/t/A.kt"
 OUT="$(bash "$GUARD" "$D" 2>&1)"
 echo "$OUT" | grep -q 'ANDROID-USER-DATA-DISCLOSURE' && bad "Symbol in an import without a declared permission stays silent" || ok "Symbol in an import without a declared permission stays silent"
@@ -669,7 +671,7 @@ rm -rf "$D"
 # 61 src/dist is an Android product-flavor source set and must be scanned, web/dist is build output and must not
 D="$(mktemp -d)"; mkdir -p "$D/app/src/main" "$D/app/src/dist/java/t"
 printf '<manifest package="t"/>' > "$D/app/src/main/AndroidManifest.xml"
-printf 'android { defaultConfig { targetSdkVersion 36 } buildTypes { release { minifyEnabled true } } }\n' > "$D/app/build.gradle"
+printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdkVersion 36 } buildTypes { release { minifyEnabled true } } }\n' > "$D/app/build.gradle"
 printf 'import com.stripe.android.Stripe\n' > "$D/app/src/dist/java/t/Pay.kt"
 OUT="$(bash "$GUARD" "$D" 2>&1)"
 echo "$OUT" | grep -q 'GOOGLE-PLAY-BILLING' && ok "Stripe inside a src/dist flavor tree is still seen" || bad "Stripe inside a src/dist flavor tree is still seen"
@@ -1063,6 +1065,8 @@ mk_shim_path() {  # $1 tool name to shim, $2 shim body, $3 = jq|python3|none to 
   local d; d="$(mktemp -d)"
   for b in bash grep sed awk find xargs tr head mktemp cat rm printf wc sort uniq cut plutil xmllint dirname basename date; do p="$(command -v "$b" 2>/dev/null)"; [ -n "$p" ] && ln -s "$p" "$d/$b"; done
   [ "$3" = jq ] && ln -s "$(command -v jq)" "$d/jq"; [ "$3" = python3 ] && ln -s "$(pyenv which python3 2>/dev/null || command -v python3)" "$d/python3"
+  # The selected tool may already be a symlink. Never write through it into PATH.
+  rm -f "$d/$1"
   printf '%s\n' "$2" > "$d/$1"; chmod +x "$d/$1"
   echo "$d"
 }
@@ -1178,6 +1182,7 @@ mk_nested_native() {
   printf 'import CoreLocation\nlet m=CLLocationManager()\n' > "$d/ios/App/A.swift"
   printf "include ':app'\n" > "$d/android/settings.gradle"
   printf '<manifest xmlns:android="http://schemas.android.com/apk/res/android"></manifest>' > "$d/android/app/src/main/AndroidManifest.xml"
+  printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdk 36 } }\n' > "$d/android/app/build.gradle"
   echo "$d"
 }
 # Two native projects side by side, one per platform, with no marker at the root.
@@ -1726,7 +1731,7 @@ printf '{"expo":{"name":"x","slug":"x"}}' > "$D/app.json"; printf '{"dependencie
 OUT="$(bash "$GUARD" "$D" 2>&1)"; RC=$?
 [ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'expo prebuild' && ok "verdict-3 an Expo app with no native folders is told to prebuild" || bad "verdict-3 an Expo app with no native folders is told to prebuild (rc=$RC)"
 ERR="$(printf '{"tool_name":"Bash","tool_input":{"command":"eas submit -p ios"}}' | CLAUDE_PROJECT_DIR="$D" bash "$GUARD" 2>&1)"; RC=$?
-[ "$RC" -eq 0 ] && echo "$ERR" | grep -q 'NOT CHECKED' && ok "verdict-4 as a hook an unscannable project is reported and never blocked" || bad "verdict-4 as a hook an unscannable project is reported and never blocked (rc=$RC)"
+[ "$RC" -eq 2 ] && echo "$ERR" | grep -q 'NOT CHECKED' && ok "verdict-4 as a hook an unscannable project blocks submit" || bad "verdict-4 as a hook an unscannable project blocks submit (rc=$RC)"
 rm -rf "$D"
 D="$(mk_ios_bad)"; OUT="$(bash "$GUARD" "$D" 2>&1)"; RC=$?
 [ "$RC" -eq 2 ] && echo "$OUT" | grep -q 'run the same command again' && ok "verdict-5 a block says what to do next" || bad "verdict-5 a block says what to do next (rc=$RC)"
@@ -1751,7 +1756,7 @@ printf '{"expo":{"name":"x","slug":"x"}}' > "$D/apps/expo/app.json"; printf '{"d
 OUT="$(bash "$GUARD" "$D" 2>&1)"; RC=$?
 echo "$OUT" | grep -q "^Apps. 2 app roots" && ! echo "$OUT" | grep -q '^CLEAR' && echo "$OUT" | grep '^NOT CHECKED' | grep -q 'apps/expo' && [ "$RC" -eq 1 ] && ok "r3-5 an unscanned sibling app stops CLEAR and is named" || bad "r3-5 an unscanned sibling app stops CLEAR and is named (rc=$RC)"
 r3_hook 'fastlane deliver' "$D" "$D/err.txt"; RC=$?
-[ "$RC" -eq 0 ] && grep -q 'NOT CHECKED' "$D/err.txt" && ok "r3-6 as a hook the unscanned sibling is reported and never blocks" || bad "r3-6 as a hook the unscanned sibling is reported and never blocks (rc=$RC)"
+[ "$RC" -eq 2 ] && grep -q 'NOT CHECKED' "$D/err.txt" && ok "r3-6 as a hook the unscanned sibling blocks submit" || bad "r3-6 as a hook the unscanned sibling blocks submit (rc=$RC)"
 rm -rf "$D"
 
 # ===== Issue 842. Findings lead the report, critical first, each with the file that triggered it. =====
@@ -1821,10 +1826,20 @@ f837() {  # name, builder, framework label, source path, submit command
   [ "$RC" -eq 2 ] && ok "837 $1 submit command runs the scan" || bad "837 $1 submit command runs the scan (rc=$RC)"
   rm -rf "$D"
   D="$("$2" "$GOOD_SRC")"; OUT="$(bash "$GUARD" "$D" 2>&1)"; RC=$?
-  [ "$RC" -eq 0 ] && echo "$OUT" | grep -q '^CLEAR\. ' && ! echo "$OUT" | grep -q '^Apps\. ' \
-    && ok "837 $1 clean project is CLEAR and scanned as one app" || bad "837 $1 clean project is CLEAR and scanned as one app (rc=$RC)"
+  case "$1" in
+    Unity|MAUI|KMP)
+      [ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'critical=0' && echo "$OUT" | grep -q '^Coverage. incomplete' && echo "$OUT" | grep -q 'target SDK' && ! echo "$OUT" | grep -q '^Apps\. ' && ! echo "$OUT" | grep -q '^CLEAR' \
+        && ok "837 $1 clean sources remain one app with the unverified Android SDK named" || bad "837 $1 clean sources remain one app with the unverified Android SDK named (rc=$RC)" ;;
+    *)
+      [ "$RC" -eq 0 ] && echo "$OUT" | grep -q '^CLEAR\. ' && ! echo "$OUT" | grep -q '^Apps\. ' \
+        && ok "837 $1 clean project is CLEAR and scanned as one app" || bad "837 $1 clean project is CLEAR and scanned as one app (rc=$RC)" ;;
+  esac
   r3_hook "$5" "$D"; RC=$?
-  [ "$RC" -eq 0 ] && ok "837 $1 submit command passes on the clean project" || bad "837 $1 submit command passes on the clean project (rc=$RC)"
+  case "$1" in
+    MAUI|KMP)
+      [ "$RC" -eq 2 ] && ok "837 $1 submit requires verification of its unresolved Android SDK" || bad "837 $1 submit requires verification of its unresolved Android SDK (rc=$RC)" ;;
+    *) [ "$RC" -eq 0 ] && ok "837 $1 submit command passes on the clean project" || bad "837 $1 submit command passes on the clean project (rc=$RC)" ;;
+  esac
   rm -rf "$D"
 }
 f837 "Unity" mk_unity "Unity" "Assets/Scripts/Api.cs" "/Applications/Unity/Unity -batchmode -quit -buildTarget iOS -executeMethod Build.Run"
@@ -1874,7 +1889,7 @@ printf '{"dependencies":{"@capacitor/core":"^6.0.0"}}' > "$D/package.json"; prin
 OUT="$(bash "$GUARD" "$D" 2>&1)"; RC=$?
 [ "$RC" -eq 1 ] && echo "$OUT" | grep -q '^NOT CHECKED' && echo "$OUT" | grep -q 'npx cap add' && ! echo "$OUT" | grep -q '^CLEAR' && ok "c3-3 a Capacitor app with no native folders is NOT CHECKED and told to add one" || bad "c3-3 a Capacitor app with no native folders is NOT CHECKED and told to add one (rc=$RC)"
 r3_hook "npx cap build ios" "$D" "$D/err.txt"; RC=$?
-[ "$RC" -eq 0 ] && grep -q 'NOT CHECKED' "$D/err.txt" && ok "c3-4 as a hook the Capacitor app is reported and not blocked" || bad "c3-4 as a hook the Capacitor app is reported and not blocked (rc=$RC)"
+[ "$RC" -eq 2 ] && grep -q 'NOT CHECKED' "$D/err.txt" && ok "c3-4 as a hook the unscannable Capacitor app blocks submit" || bad "c3-4 as a hook the unscannable Capacitor app blocks submit (rc=$RC)"
 rm -rf "$D"
 D="$(mktemp -d)"; mkdir -p "$D/lib"
 printf 'name: x\ndependencies:\n  flutter:\n    sdk: flutter\n' > "$D/pubspec.yaml"; printf 'void main() {}\n' > "$D/lib/main.dart"
@@ -2145,7 +2160,7 @@ D="$(mk_rr_expo '{"dependencies":{"expo":"51.0.0"}}' '{"expo":{"name":"x","andro
 rr_hook "eas submit -p android" "$D"
 [ "$RC" -eq 2 ] && rr_has 'GOOGLE-PERM-BACKGROUND-LOCATION' && ok "rr-A11-1 background location in the Expo config blocks an Android submit" || bad "rr-A11-1 background location in the Expo config blocks an Android submit (rc=$RC)"
 rr_hook "eas submit -p ios" "$D"
-[ "$RC" -eq 0 ] && ! rr_has 'GOOGLE-PERM-BACKGROUND-LOCATION' && rr_has 'NOT CHECKED' && ok "rr-A11-2 an iOS-only submit skips the Android config check" || bad "rr-A11-2 an iOS-only submit skips the Android config check (rc=$RC)"
+[ "$RC" -eq 2 ] && ! rr_has 'GOOGLE-PERM-BACKGROUND-LOCATION' && rr_has 'NOT CHECKED' && ok "rr-A11-2 an iOS-only submit skips the Android config check" || bad "rr-A11-2 an iOS-only submit skips the Android config check (rc=$RC)"
 rm -rf "$D"
 D="$(mk_rr_expo '{"dependencies":{"expo":"51.0.0","expo-camera":"15.0.0"}}' '{"expo":{"name":"x","android":{"permissions":["android.permission.READ_SMS"]}}}')"
 rr_run "$D"
@@ -2153,7 +2168,7 @@ rr_run "$D"
 rm -rf "$D"
 D="$(mk_rr_expo '{"dependencies":{"expo":"51.0.0","expo-camera":"15.0.0","@react-native-async-storage/async-storage":"1.0.0"}}' '{"expo":{"name":"x","plugins":[["expo-camera",{"cameraPermission":"Scan receipts to log expenses"}]],"ios":{"privacyManifests":{"NSPrivacyAccessedAPITypes":[]}},"android":{"blockedPermissions":["android.permission.ACCESS_BACKGROUND_LOCATION","android.permission.READ_SMS"]}}}')"
 rr_hook "eas submit -p android" "$D"
-[ "$RC" -eq 0 ] && rr_has 'critical=0 high=0 medium=0' && rr_has 'NOT CHECKED' && ok "rr-A11-4 a clean Expo config with blockedPermissions stays clean and NOT CHECKED" || bad "rr-A11-4 a clean Expo config with blockedPermissions stays clean and NOT CHECKED (rc=$RC)"
+[ "$RC" -eq 2 ] && rr_has 'critical=0 high=0 medium=0' && rr_has 'NOT CHECKED' && ok "rr-A11-4 a clean Expo config with blockedPermissions stays clean and NOT CHECKED" || bad "rr-A11-4 a clean Expo config with blockedPermissions stays clean and NOT CHECKED (rc=$RC)"
 rm -rf "$D"
 
 # FP1 a commit or PR message is text, a real submit beside it is not
@@ -2302,9 +2317,9 @@ printf '%s' "$OUTJ" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.e
 OUTJ="$( cd /tmp && cx_payload cursor "$FL deliver" "$D" | env -u CLAUDE_PROJECT_DIR bash "$GUARD" 2>"$ERRF" )"; RC=$?
 printf '%s' "$OUTJ" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("permission")=="deny" and d.get("user_message") and d.get("agent_message") else 1)' && [ "$RC" -eq 2 ] && grep -q 'BLOCKED' "$ERRF" && ok "cx11-2 a blocked Cursor submit prints permission deny JSON and exits 2" || bad "cx11-2 a blocked Cursor submit prints permission deny JSON and exits 2 (rc=$RC out=${OUTJ:0:60})"
 OUTJ="$( cd /tmp && cx_payload cursor "$FL deliver" "$EMPTY" | env -u CLAUDE_PROJECT_DIR bash "$GUARD" 2>"$ERRF" )"; RC=$?
-printf '%s' "$OUTJ" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("permission")=="allow" else 1)' && [ "$RC" -eq 0 ] && grep -q 'NOT CHECKED' "$ERRF" && ok "cx11-3 a NOT CHECKED Cursor submit still prints valid JSON" || bad "cx11-3 a NOT CHECKED Cursor submit still prints valid JSON (rc=$RC out=${OUTJ:0:60})"
+printf '%s' "$OUTJ" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("permission")=="deny" else 1)' && [ "$RC" -eq 2 ] && grep -q 'NOT CHECKED' "$ERRF" && ok "cx11-3 a NOT CHECKED Cursor submit still prints valid JSON" || bad "cx11-3 a NOT CHECKED Cursor submit still prints valid JSON (rc=$RC out=${OUTJ:0:60})"
 OUTJ="$( cd /tmp && cx_payload cursor "$FL deliver" "$CLEAN" | env CLAUDE_PROJECT_DIR="$CLEAN" PATH="$CX_NOTOOLS" bash "$GUARD" 2>"$ERRF" )"; RC=$?
-[ "$OUTJ" = '{"permission":"allow"}' ] && [ "$RC" -eq 0 ] && ok "cx11-4 the no-tools tier also answers Cursor with JSON" || bad "cx11-4 the no-tools tier also answers Cursor with JSON (rc=$RC out=${OUTJ:0:60})"
+printf '%s' "$OUTJ" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("permission")=="deny" else 1)' && [ "$RC" -eq 2 ] && ok "cx11-4 the no-tools tier also answers Cursor with JSON" || bad "cx11-4 the no-tools tier also answers Cursor with JSON (rc=$RC out=${OUTJ:0:60})"
 rm -rf "$CLEAN" "$D" "$EMPTY" "$ERRF"
 
 # CX16 a managed Expo config with single-quoted keys is read like a double-quoted one
@@ -3260,6 +3275,162 @@ D="$(mk_android_perm '')"; printf 'android { compileSdk = 36\n defaultConfig { n
 gs_check "abi-14 abiFilters.remove of the 64-bit ABI is flagged" "$D" 'ANDROID-64BIT-ABI-MISSING' 1
 D="$(mk_android_perm '')"; printf 'android { compileSdk = 36\n defaultConfig { ndk {\n abiFilters += setOf("arm64-v8a")\n abiFilters.clear()\n abiFilters += "armeabi-v7a"\n } } }\n' > "$D/android/app/build.gradle.kts"
 gs_check "abi-15 abiFilters.clear drops earlier ABIs" "$D" 'ANDROID-64BIT-ABI-MISSING' 1
+# ===== Review R01-R04. Source coverage and required checks are never silently lost. =====
+PRIVATE_TOOLS="$(mktemp -d)"
+cp "$(command -v mktemp)" "$PRIVATE_TOOLS/mktemp"
+cp "$PRIVATE_TOOLS/mktemp" "$PRIVATE_TOOLS/mktemp.before"
+SHIM="$(PATH="$PRIVATE_TOOLS:$PATH" mk_shim_path mktemp '#!/bin/sh
+exit 1' none)"
+if cmp -s "$PRIVATE_TOOLS/mktemp" "$PRIVATE_TOOLS/mktemp.before" && [ ! -L "$SHIM/mktemp" ] && ! "$SHIM/mktemp"; then
+  ok "R01 a shim owns its file and leaves the original PATH executable unchanged"
+else
+  bad "R01 a shim owns its file and leaves the original PATH executable unchanged"
+fi
+rm -rf "$SHIM" "$PRIVATE_TOOLS"
+
+for ext in m mm; do
+  D="$(mk_ios_clean)"; rm "$D/App/X.swift" "$D/App/PrivacyInfo.xcprivacy"
+  printf '<plist><dict><key>ITSAppUsesNonExemptEncryption</key><false/></dict></plist>' > "$D/App/Info.plist"
+  printf 'AVCaptureDevice *device;\nUserDefaults.standard;\nconst char *url="https://staging.example.net";\n' > "$D/App/Native.$ext"
+  OUT="$(bash "$GUARD" "$D" 2>&1)"; RC=$?
+  if [ "$RC" -eq 2 ] && echo "$OUT" | grep -q 'MISSING-USAGE-DESCRIPTION' && echo "$OUT" | grep -q 'APPLE-PRIVACY-MANIFEST-MISSING' && echo "$OUT" | grep -q 'APPLE-2.1-STAGING-BACKEND'; then
+    ok "R02 .$ext preserves camera, privacy API and staging findings"
+  else
+    bad "R02 .$ext preserves camera, privacy API and staging findings (rc=$RC)"
+  fi
+  rm -rf "$D"
+done
+
+review_sdk_app() {  # full Android app; argument is the Android DSL after the plugin
+  local d; d="$(mktemp -d)"; mkdir -p "$d/app/src/main"
+  printf '<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application/></manifest>' > "$d/app/src/main/AndroidManifest.xml"
+  printf 'plugins { id("com.android.application") }\n%s\n' "$1" > "$d/app/build.gradle"
+  printf 'class App { String policy="https://app.invalid/privacy-policy"; }\n' > "$d/app/src/main/App.java"
+  echo "$d"
+}
+for suffix in '// TODO targetSdk 99' '/* targetSdk 99 */'; do
+  D="$(review_sdk_app "android { defaultConfig { targetSdk 34 } } $suffix")"
+  OUT="$(bash "$GUARD" "$D" 2>&1)"; RC=$?
+  [ "$RC" -eq 2 ] && echo "$OUT" | grep -q '\[CRITICAL\] GOOGLE-TARGET-API ' && ok "R03 a commented SDK never hides an old app target ($suffix)" || bad "R03 a commented SDK never hides an old app target ($suffix rc=$RC)"
+  rm -rf "$D"
+done
+D="$(review_sdk_app 'android { defaultConfig { targetSdk = 36 } productFlavors { legacy { targetSdkVersion(34) } current {} } }')"
+OUT="$(bash "$GUARD" "$D" 2>&1)"; RC=$?
+[ "$RC" -eq 2 ] && echo "$OUT" | grep -q 'release variant legacy' && ok "R03 an old flavor is not hidden by a newer default target" || bad "R03 an old flavor is not hidden by a newer default target (rc=$RC)"
+rm -rf "$D"
+D="$(review_sdk_app 'android { defaultConfig { targetSdk = 34 } productFlavors { demo { targetSdk = 36 } paid { targetSdk = 37 } } }')"
+OUT="$(bash "$GUARD" "$D" 2>&1)"; RC=$?
+[ "$RC" -eq 0 ] && echo "$OUT" | grep -q '^Coverage. complete' && ! echo "$OUT" | grep -q '\[CRITICAL\] GOOGLE-TARGET-API ' && ok "R03 release flavor overrides replace the default target" || bad "R03 release flavor overrides replace the default target (rc=$RC)"
+rm -rf "$D"
+D="$(review_sdk_app 'android { defaultConfig { targetSdk = 36 } buildTypes { debug { targetSdkVersion 34 } } }')"
+mkdir -p "$D/library"
+printf 'plugins { id("com.android.library") }\nandroid { defaultConfig { targetSdk = 30 } }\n' > "$D/library/build.gradle"
+OUT="$(bash "$GUARD" "$D" 2>&1)"; RC=$?
+[ "$RC" -eq 0 ] && echo "$OUT" | grep -q '^Coverage. complete' && ok "R03 a library or debug-only old value cannot become an app target blocker" || bad "R03 a library or debug-only old value cannot become an app target blocker (rc=$RC)"
+rm -rf "$D"
+for config in 'android { defaultConfig { targetSdk = libs.versions.targetSdk.get().toInt() } }' 'android { defaultConfig { targetSdk = 36 + offset } }' 'android { defaultConfig {} }' 'android { defaultConfig { targetSdk=36; targetSdk=37 } }' 'android { defaultConfig { targetSdk=36 } if (legacy) { defaultConfig { targetSdk=34 } } }'; do
+  D="$(review_sdk_app "$config")"; mkdir -p "$D/gradle"; printf '[versions]\ntargetSdk="34"\n' > "$D/gradle/libs.versions.toml"
+  OUT="$(bash "$GUARD" "$D" 2>&1)"; RC=$?
+  [ "$RC" -eq 1 ] && echo "$OUT" | grep -q '^Coverage. incomplete' && ! echo "$OUT" | grep -q '^CLEAR' && ok "R03 missing, dynamic or ambiguous app SDK stays unknown" || bad "R03 missing, dynamic or ambiguous app SDK stays unknown (rc=$RC config=$config)"
+  OUT="$(printf '{"tool_input":{"command":"./gradlew bundleRelease"}}' | CLAUDE_PROJECT_DIR="$D" bash "$GUARD" 2>&1)"; RC=$?
+  [ "$RC" -eq 2 ] && echo "$OUT" | grep -q 'NOT CHECKED' && ok "R03 unresolved SDK denies a submit hook" || bad "R03 unresolved SDK denies a submit hook (rc=$RC)"
+  rm -rf "$D"
+done
+for template in 'def template = /android { defaultConfig { targetSdk 36 } }/' 'def template = $/android { defaultConfig { targetSdk 36 } }/$'; do
+  D="$(review_sdk_app "$template")"
+  OUT="$(bash "$GUARD" "$D" 2>&1)"; RC=$?
+  [ "$RC" -eq 1 ] && echo "$OUT" | grep -q '^Coverage. incomplete' && ! echo "$OUT" | grep -q '^CLEAR' && ! echo "$OUT" | grep -q '\[CRITICAL\] GOOGLE-TARGET-API ' && ok "R03 Groovy slashy template text cannot provide a target SDK" || bad "R03 Groovy slashy template text cannot provide a target SDK (rc=$RC)"
+  rm -rf "$D"
+done
+for applied in 'apply from: "legacy.gradle"' 'apply(from = "legacy.gradle")' 'apply { from("legacy.gradle") }' 'android.defaultConfig.setTargetSdkVersion(34)'; do
+  D="$(review_sdk_app "android { defaultConfig { targetSdk = 36 } }; $applied")"
+  printf 'android.defaultConfig.targetSdkVersion 34\n' > "$D/app/legacy.gradle"
+  OUT="$(bash "$GUARD" "$D" 2>&1)"; RC=$?
+  [ "$RC" -eq 1 ] && echo "$OUT" | grep -q '^Coverage. incomplete' && ! echo "$OUT" | grep -q '^CLEAR' && ok "R03 external or dynamic Gradle configuration cannot hide behind a literal target" || bad "R03 external or dynamic Gradle configuration cannot hide behind a literal target (rc=$RC)"
+  rm -rf "$D"
+done
+D="$(review_sdk_app 'plugins { alias(libs.plugins.android.application) }; android { defaultConfig { targetSdk = 36 } }')"
+OUT="$(bash "$GUARD" "$D" 2>&1)"; RC=$?
+[ "$RC" -eq 1 ] && echo "$OUT" | grep -q '^Coverage. incomplete' && echo "$OUT" | grep -q 'plugin catalog aliases' && ok "R03 a catalog plugin name does not prove application identity" || bad "R03 a catalog plugin name does not prove application identity (rc=$RC)"
+rm -rf "$D"
+D="$(review_sdk_app 'plugins { id("my.company.target-convention") }; android { defaultConfig { targetSdk = 36 } }')"
+OUT="$(bash "$GUARD" "$D" 2>&1)"; RC=$?
+[ "$RC" -eq 1 ] && echo "$OUT" | grep -q '^Coverage. incomplete' && echo "$OUT" | grep -q 'additional plugin' && ok "R03 a custom target convention plugin requires resolved SDK evidence" || bad "R03 a custom target convention plugin requires resolved SDK evidence (rc=$RC)"
+rm -rf "$D"
+D="$(review_sdk_app 'android { defaultConfig { targetSdk = 36 } }')"
+mkdir -p "$D/custom/src/main"
+printf 'plugins { id("my.company.conventions") }\ndef template = '"'"'plugins { id("com.android.library") }'"'"'\n' > "$D/custom/build.gradle"
+printf '<manifest/>' > "$D/custom/src/main/AndroidManifest.xml"
+OUT="$(bash "$GUARD" "$D" 2>&1)"; RC=$?
+[ "$RC" -eq 1 ] && echo "$OUT" | grep -q '^Coverage. incomplete' && echo "$OUT" | grep -q 'custom/src/main/AndroidManifest.xml' && ! echo "$OUT" | grep -q '^CLEAR' && ok "R03 a convention module manifest is unknown beside a resolved app" || bad "R03 a convention module manifest is unknown beside a resolved app (rc=$RC)"
+rm -rf "$D"
+D="$(mktemp -d)"; mkdir -p "$D/app/src/main"; printf '<manifest/>' > "$D/app/src/main/AndroidManifest.xml"
+OUT="$(bash "$GUARD" "$D" 2>&1)"; RC=$?
+[ "$RC" -eq 1 ] && echo "$OUT" | grep -q '^Coverage. incomplete' && ok "R03 a manifest alone supplies no verified release SDK" || bad "R03 a manifest alone supplies no verified release SDK (rc=$RC)"
+rm -rf "$D"
+
+D="$(review_sdk_app 'android { defaultConfig { targetSdk = 36 } }')"; PAYLOAD="$(mktemp -d)"
+mkdir -p "$PAYLOAD/.github/hooks"; HOOK_COPY="$PAYLOAD/.github/hooks/storegate-guard.sh"; cp "$GUARD" "$HOOK_COPY"
+OUT="$(bash "$HOOK_COPY" "$D" 2>&1)"; RC=$?
+[ "$RC" -eq 1 ] && echo "$OUT" | grep -q '^Coverage. incomplete' && echo "$OUT" | grep -q 'GOOGLE-TARGET-API-UNCHECKED' && ok "R04 a missing Android SDK helper is incomplete" || bad "R04 a missing Android SDK helper is incomplete (rc=$RC)"
+rm -rf "$D" "$PAYLOAD"
+D="$(mk_ios_clean)"; PAYLOAD="$(mktemp -d)"; mkdir -p "$PAYLOAD/.github/hooks"; HOOK_COPY="$PAYLOAD/.github/hooks/storegate-guard.sh"; cp "$GUARD" "$HOOK_COPY"
+OUT="$(bash "$HOOK_COPY" "$D" 2>&1)"; RC=$?
+[ "$RC" -eq 1 ] && echo "$OUT" | grep -q '^Coverage. incomplete' && echo "$OUT" | grep -q 'APPLE-MANIFEST-VALIDATOR-UNAVAILABLE' && ok "R04 a missing privacy helper is incomplete without a HOME fallback" || bad "R04 a missing privacy helper is incomplete without a HOME fallback (rc=$RC)"
+OUT="$(printf '{"tool_input":{"command":"fastlane deliver"}}' | CLAUDE_PROJECT_DIR="$D" bash "$HOOK_COPY" 2>&1)"; RC=$?
+[ "$RC" -eq 2 ] && echo "$OUT" | grep -q 'NOT CHECKED' && ok "R04 an unavailable required validator denies submission" || bad "R04 an unavailable required validator denies submission (rc=$RC)"
+mkdir -p "$PAYLOAD/.github/hooks/storegate/scripts"
+printf 'raise RuntimeError("validator failed")\n' > "$PAYLOAD/.github/hooks/storegate/scripts/validate-privacy-manifest.py"
+OUT="$(bash "$HOOK_COPY" "$D" 2>&1)"; RC=$?
+[ "$RC" -eq 1 ] && echo "$OUT" | grep -q '^Coverage. incomplete' && ok "R04 a crashing privacy validator is incomplete" || bad "R04 a crashing privacy validator is incomplete (rc=$RC)"
+cp "$HERE/../../scripts/validate-privacy-manifest.py" "$PAYLOAD/.github/hooks/storegate/scripts/validate-privacy-manifest.py"
+printf '<plist><dict><key>NSPrivacyAccessedAPITypes</key><array/></dict></plist>' > "$D/App/PrivacyInfo.xcprivacy"
+OUT="$(bash "$HOOK_COPY" "$D" 2>&1)"; RC=$?
+[ "$RC" -eq 2 ] && echo "$OUT" | grep -q 'APPLE-MANIFEST-API-TYPES-EMPTY' && ok "R04 repository-relative privacy helper preserves validator-only critical findings" || bad "R04 repository-relative privacy helper preserves validator-only critical findings (rc=$RC)"
+rm -rf "$D" "$PAYLOAD"
+# A copied global hook cannot borrow an unrelated HOME/scripts validator.
+D="$(mk_ios_clean)"; PRIVATE_HOME="$(mktemp -d)"
+mkdir -p "$PRIVATE_HOME/.codex/hooks" "$PRIVATE_HOME/scripts"
+HOOK_COPY="$PRIVATE_HOME/.codex/hooks/storegate-guard.sh"; cp "$GUARD" "$HOOK_COPY"
+printf 'pass\n' > "$PRIVATE_HOME/scripts/validate-privacy-manifest.py"
+printf '<plist><dict><key>NSPrivacyAccessedAPITypes</key><array/></dict></plist>' > "$D/App/PrivacyInfo.xcprivacy"
+OUT="$(HOME="$PRIVATE_HOME" bash "$HOOK_COPY" "$D" 2>&1)"; RC=$?
+[ "$RC" -eq 1 ] && echo "$OUT" | grep -q '^Coverage. incomplete' && echo "$OUT" | grep -q 'APPLE-MANIFEST-VALIDATOR-UNAVAILABLE' && ok "R04 an unowned global guard ignores an unrelated relative validator" || bad "R04 an unowned global guard ignores an unrelated relative validator (rc=$RC)"
+OUT="$(printf '{"tool_input":{"command":"fastlane deliver"}}' | HOME="$PRIVATE_HOME" CLAUDE_PROJECT_DIR="$D" bash "$HOOK_COPY" 2>&1)"; RC=$?
+[ "$RC" -eq 2 ] && echo "$OUT" | grep -q '^Coverage. incomplete' && ! echo "$OUT" | grep -q '^CLEAR' && ok "R04 an unowned global hook with a decoy helper denies submission" || bad "R04 an unowned global hook with a decoy helper denies submission (rc=$RC)"
+mkdir -p "$PRIVATE_HOME/.agents/skills/app-store-compliance/scripts"
+cp "$HERE/../../scripts/validate-privacy-manifest.py" "$PRIVATE_HOME/.agents/skills/app-store-compliance/scripts/validate-privacy-manifest.py"
+printf 'codex\t%s\n' "$HOOK_COPY" > "$PRIVATE_HOME/.agents/skills/app-store-compliance/.guards"
+OUT="$(HOME="$PRIVATE_HOME" bash "$HOOK_COPY" "$D" 2>&1)"; RC=$?
+[ "$RC" -eq 2 ] && echo "$OUT" | grep -q 'APPLE-MANIFEST-API-TYPES-EMPTY' && echo "$OUT" | grep -q '^Coverage. complete' && ok "R04 an owned global guard resolves its registered shared validator" || bad "R04 an owned global guard resolves its registered shared validator (rc=$RC)"
+# CLAUDE_CONFIG_DIR may be any folder; only a matching nearby owner record permits its helper.
+mkdir -p "$PRIVATE_HOME/custom-config/hooks" "$PRIVATE_HOME/custom-config/skills/app-store-compliance/scripts"
+HOOK_COPY="$PRIVATE_HOME/custom-config/hooks/storegate-guard.sh"; cp "$GUARD" "$HOOK_COPY"
+cp "$HERE/../../scripts/validate-privacy-manifest.py" "$PRIVATE_HOME/custom-config/skills/app-store-compliance/scripts/validate-privacy-manifest.py"
+OUT="$(HOME="$PRIVATE_HOME" bash "$HOOK_COPY" "$D" 2>&1)"; RC=$?
+[ "$RC" -eq 1 ] && echo "$OUT" | grep -q '^Coverage. incomplete' && ok "R04 an unregistered nearby skill cannot supply a copied guard" || bad "R04 an unregistered nearby skill cannot supply a copied guard (rc=$RC)"
+printf 'claude\t%s.other\n' "$HOOK_COPY" > "$PRIVATE_HOME/custom-config/skills/app-store-compliance/.guards"
+OUT="$(HOME="$PRIVATE_HOME" bash "$HOOK_COPY" "$D" 2>&1)"; RC=$?
+[ "$RC" -eq 1 ] && echo "$OUT" | grep -q '^Coverage. incomplete' && ok "R04 nearby skill ownership requires an exact guard path" || bad "R04 nearby skill ownership requires an exact guard path (rc=$RC)"
+printf 'claude\t%s\n' "$HOOK_COPY" > "$PRIVATE_HOME/custom-config/skills/app-store-compliance/.guards"
+OUT="$(HOME="$PRIVATE_HOME" bash "$HOOK_COPY" "$D" 2>&1)"; RC=$?
+[ "$RC" -eq 2 ] && echo "$OUT" | grep -q 'APPLE-MANIFEST-API-TYPES-EMPTY' && echo "$OUT" | grep -q '^Coverage. complete' && ok "R04 an owned nearby skill supports an arbitrary Claude config directory" || bad "R04 an owned nearby skill supports an arbitrary Claude config directory (rc=$RC)"
+OUT="$(printf '{"tool_input":{"command":"fastlane deliver"}}' | HOME="$PRIVATE_HOME" CLAUDE_PROJECT_DIR="$D" bash "$HOOK_COPY" 2>&1)"; RC=$?
+[ "$RC" -eq 2 ] && echo "$OUT" | grep -q 'APPLE-MANIFEST-API-TYPES-EMPTY' && echo "$OUT" | grep -q '^Coverage. complete' && ok "R04 arbitrary Claude config hooks retain validator-only critical findings" || bad "R04 arbitrary Claude config hooks retain validator-only critical findings (rc=$RC)"
+rm -rf "$D" "$PRIVATE_HOME"
+D="$(mk_ios_clean)"
+BASE="$(bash "$GUARD" "$D" 2>&1 | sed '/^Scan time\./d')"
+mkdir -p "$D/.github/hooks/storegate/data" "$D/.github/hooks/storegate/app/src/main"
+cp "$HERE/../../data/rejection-patterns.json" "$D/.github/hooks/storegate/data/rejection-patterns.json"
+printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { targetSdk=30 } }\n' > "$D/.github/hooks/storegate/app/build.gradle"
+printf '<manifest/>' > "$D/.github/hooks/storegate/app/src/main/AndroidManifest.xml"
+OUT="$(bash "$GUARD" "$D" 2>&1 | sed '/^Scan time\./d')"; RC=$?
+[ "$RC" -eq 0 ] && [ "$BASE" = "$OUT" ] && ok "R04 the repository hook payload cannot pollute app sources or app roots" || bad "R04 the repository hook payload cannot pollute app sources or app roots (rc=$RC)"
+printf 'let u="https://staging.other.net"\n' > "$D/.github/shipped.swift"
+OUT="$(bash "$GUARD" "$D" 2>&1)"; RC=$?
+[ "$RC" -eq 2 ] && echo "$OUT" | grep -q 'APPLE-2.1-STAGING-BACKEND' && ok "R04 ordinary .github app source remains scanned" || bad "R04 ordinary .github app source remains scanned (rc=$RC)"
+rm -rf "$D"
+
 echo ""
 echo "app-store-compliance-guard-test: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
