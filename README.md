@@ -21,6 +21,8 @@ Read it as a website at [taigashinohara.github.io/StoreGate](https://taigashinoh
 
 ## Start here
 
+On macOS, the [desktop prototype](desktop/README.md) lets you walk through a sample Mac App Store release, see the next step, and resume from saved progress.
+
 Pick one row. The time shown is for that first step.
 
 | You are | Do this first | Time |
