@@ -21,7 +21,7 @@ Read it as a website at [taigashinohara.github.io/StoreGate](https://taigashinoh
 
 ## Start here
 
-On macOS, the [desktop prototype](desktop/README.md) lets you walk through a sample Mac App Store release, see the next step, and resume from saved progress.
+On macOS, the [desktop app](desktop/README.md) guides a Mac App Store release from project setup through listing checks, build verification, and confirmation that the selected version is available.
 
 Pick one row. The time shown is for that first step.
 

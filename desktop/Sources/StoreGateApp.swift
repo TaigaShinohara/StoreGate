@@ -84,19 +84,51 @@ final class ReleaseStore: ObservableObject {
 
 @main
 struct StoreGateApp: App {
-    @StateObject private var store = ReleaseStore(
+    @StateObject private var sample = ReleaseStore(
         stateURL: URL.applicationSupportDirectory
             .appendingPathComponent("StoreGate Prototype", isDirectory: true)
             .appendingPathComponent("release-progress.json")
     )
+    @StateObject private var delivery = DeliveryStore(url: Self.workspaceFile())
 
     var body: some Scene {
         WindowGroup("StoreGate") {
-            ReleaseWindow(store: store)
+            StoreGateEntry(delivery: delivery, sample: sample)
                 .frame(minWidth: 820, minHeight: 580)
                 .tint(.storeGate)
         }
         .defaultSize(width: 980, height: 690)
+    }
+
+    private static func workspaceFile() -> URL {
+        let directory = ProcessInfo.processInfo.environment["STOREGATE_WORKSPACE_DIR"]
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? URL.applicationSupportDirectory.appendingPathComponent("StoreGate", isDirectory: true)
+        return directory.appendingPathComponent("delivery-workspace.json")
+    }
+}
+
+private struct StoreGateEntry: View {
+    @ObservedObject var delivery: DeliveryStore
+    @ObservedObject var sample: ReleaseStore
+    @State private var showingSample = false
+
+    var body: some View {
+        if showingSample {
+            VStack(spacing: 0) {
+                HStack {
+                    Button("配信案件に戻る", systemImage: "chevron.left") { showingSample = false }
+                    Spacer()
+                    Label("サンプルモード", systemImage: "testtube.2")
+                        .foregroundStyle(.secondary)
+                }
+                .padding(12)
+                Divider()
+                ReleaseWindow(store: sample)
+            }
+        } else {
+            WorkspaceShell(store: delivery, openSample: { showingSample = true })
+        }
     }
 }
 

@@ -73,7 +73,7 @@ enum ReleaseStep: String, CaseIterable, Codable, Identifiable {
     }
 }
 
-struct BuildIdentity: Codable, Equatable {
+struct BuildIdentity: Codable, Equatable, Sendable {
     let bundleID: String
     let version: String
     let build: String
