@@ -202,11 +202,10 @@ private struct ReleaseWindow: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack(spacing: 10) {
-                Image(systemName: "checkmark.shield.fill")
-                    .font(.title2)
-                    .foregroundStyle(.white)
+                Image(nsImage: NSApplication.shared.applicationIconImage)
+                    .resizable()
+                    .scaledToFit()
                     .frame(width: 36, height: 36)
-                    .background(Color.storeGate, in: RoundedRectangle(cornerRadius: 9))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("StoreGate").font(.title3.weight(.semibold))
