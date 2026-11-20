@@ -174,12 +174,20 @@ struct StoreProgressPane: View {
     @ViewBuilder private var publicationActions: some View {
         switch project.phase {
         case .approved:
-            Text(project.scope.method == .manual
+            let recordOnly = project.scope.method == .manual && project.observedBeforeReadiness && !project.uploadBlockers.isEmpty
+            Text(recordOnly
+                 ? "StoreGate側の確認が残っているため、ここではストアで見た事実の記録だけを行います。"
+                 : project.scope.method == .manual
                  ? "App Store Connectの対象バージョンで「このバージョンをリリース」を実行します。処理が終わるまで、ここで公開確認をしないでください。"
                  : "自動公開が設定されています。公開の反映を待ち、指定した地域のストアで今回のバージョンを確認します。")
-            Link("App Store Connectを開く", destination: ReleaseLinks.connect)
-            Link("公開方法の手順", destination: ReleaseLinks.release)
-            observationButton(project.scope.method == .manual ? "公開操作を実行したことを記録" : "反映待ちに進む", target: .propagation)
+            if recordOnly {
+                Link("App Store Connectで状態を確認", destination: ReleaseLinks.connect)
+                observationButton("公開処理が始まっていることを記録", target: .propagation)
+            } else {
+                Link("App Store Connectを開く", destination: ReleaseLinks.connect)
+                Link("公開方法の手順", destination: ReleaseLinks.release)
+                observationButton(project.scope.method == .manual ? "公開操作を実行したことを記録" : "反映待ちに進む", target: .propagation)
+            }
         case .propagation:
             Text("配信先のApp Store商品ページを開き、バージョン履歴で今回の版を確認します。旧版や別のアプリのページは完了にできません。")
             Link("App Store Connectで配信状況を確認", destination: ReleaseLinks.connect)
@@ -216,11 +224,11 @@ struct StoreProgressPane: View {
         _ label: String, target: StoreProgress, needsReadiness: Bool = false, prominent: Bool = true
     ) -> some View {
         if prominent {
-            Button(label) { observation = ObservationAction(label: label, target: target) }
+            Button(label) { observation = ObservationAction(label: label, target: target, verifyArchive: needsReadiness) }
                 .buttonStyle(.borderedProminent)
                 .disabled(needsReadiness && !project.uploadBlockers.isEmpty)
         } else {
-            Button(label) { observation = ObservationAction(label: label, target: target) }
+            Button(label) { observation = ObservationAction(label: label, target: target, verifyArchive: needsReadiness) }
                 .disabled(needsReadiness && !project.uploadBlockers.isEmpty)
         }
     }
@@ -244,6 +252,7 @@ private struct ObservationAction: Identifiable {
     let label: String
     let target: StoreProgress
     var existing = false
+    var verifyArchive = false
 }
 
 private struct ObservationSheet: View {
@@ -257,6 +266,7 @@ private struct ObservationSheet: View {
     @State private var note = ""
     @State private var issue: String?
     @State private var acceptedForRetry = false
+    @State private var checking = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -264,14 +274,19 @@ private struct ObservationSheet: View {
             Text("見た画面で対象アプリと版を照合し、確認した状態を記録します。予定は Apple ID \(project.storeAppID) / 版 \(project.scope.version) / ビルド \(project.scope.build) です。")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            TextField("確認したApple ID", text: $appID)
-            TextField("確認したバージョン", text: $version)
-            TextField("確認したビルド番号", text: $build)
-            TextField("確認した画面と状態", text: $note, axis: .vertical)
+            Group {
+                TextField("確認したApple ID", text: $appID)
+                TextField("確認したバージョン", text: $version)
+                TextField("確認したビルド番号", text: $build)
+                TextField("確認した画面と状態", text: $note, axis: .vertical)
+            }
+            .disabled(store.saveProblem != nil || checking)
+            if checking { ProgressView("提出対象のアーカイブを確認中…") }
             if let issue { WorkNotice(text: issue) }
             if let problem = store.saveProblem { WorkNotice(text: problem) }
             HStack {
-                Button("キャンセル") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(store.saveProblem == nil ? "キャンセル" : "閉じる") { dismiss() }
+                    .keyboardShortcut(.cancelAction).disabled(checking)
                 Spacer()
                 if acceptedForRetry && store.saveProblem != nil {
                     Button("保存を再試行") {
@@ -282,7 +297,7 @@ private struct ObservationSheet: View {
                 } else {
                     Button("確認結果を保存") { submit() }
                         .buttonStyle(.borderedProminent)
-                        .disabled([appID, version, build, note].contains(where: \.isBlank) || store.saveProblem != nil)
+                        .disabled([appID, version, build, note].contains(where: \.isBlank) || store.saveProblem != nil || checking)
                 }
             }
         }
@@ -291,8 +306,31 @@ private struct ObservationSheet: View {
     }
 
     private func submit() {
-        var accepted = false
         let observed = BuildIdentity(bundleID: project.bundleID, version: version, build: build)
+        guard action.verifyArchive else {
+            persist(observed)
+            return
+        }
+        guard let saved = store.current(project.id)?.archive else {
+            issue = "照合結果がありません。「配布用ビルド」でアーカイブを選んでください。"
+            return
+        }
+        checking = true
+        issue = nil
+        Task {
+            defer { checking = false }
+            guard let latest = try? await ArchiveInspection.inspect(URL(fileURLWithPath: saved.path)),
+                  latest.sameSignedArtifact(as: saved),
+                  store.current(project.id)?.archive?.sameSignedArtifact(as: saved) == true else {
+                issue = "提出対象のアーカイブが見つからないか、照合時から変わりました。「配布用ビルド」で選び直してください。"
+                return
+            }
+            persist(observed)
+        }
+    }
+
+    private func persist(_ observed: BuildIdentity) {
+        var accepted = false
         let persisted = store.update(project.id) {
             guard $0.storeAppID == appID else { return }
             accepted = action.existing
@@ -315,17 +353,20 @@ private struct RevisionSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("修正する理由と範囲を記録").font(.title2).accessibilityAddTraits(.isHeader)
-            TextField("Appleの指摘、問題、次に直すこと", text: $note, axis: .vertical)
-            ForEach(RevisionArea.allCases) { area in
-                Toggle(area.title, isOn: Binding(get: { areas.contains(area) }, set: {
-                    if $0 { areas.insert(area) } else { areas.remove(area) }
-                }))
+            Group {
+                TextField("Appleの指摘、問題、次に直すこと", text: $note, axis: .vertical)
+                ForEach(RevisionArea.allCases) { area in
+                    Toggle(area.title, isOn: Binding(get: { areas.contains(area) }, set: {
+                        if $0 { areas.insert(area) } else { areas.remove(area) }
+                    }))
+                }
             }
+            .disabled(store.saveProblem != nil)
             Text("選んだ範囲に関連する確認を未確認に戻します。ビルドを変える場合は新しいビルド番号が必要です。")
                 .foregroundStyle(.secondary)
             if let problem = store.saveProblem { WorkNotice(text: problem) }
             HStack {
-                Button("キャンセル") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(store.saveProblem == nil ? "キャンセル" : "閉じる") { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
                 if store.saveProblem != nil {
                     Button("保存を再試行") {
