@@ -21,6 +21,7 @@ case "${1:-}" in
     "$build/ReleaseFlowChecks"
     swift_build "$here/Sources/ReleaseFlow.swift" "$here/Sources/DeliveryFlow.swift" \
       "$here/Sources/ArchiveInspection.swift" "$here/Sources/DeliveryAudit.swift" \
+      "$here/Sources/DeliveryStore.swift" \
       "$here/Tests/DeliveryFlowChecks.swift" -o "$build/DeliveryFlowChecks"
     "$build/DeliveryFlowChecks"
     ;;

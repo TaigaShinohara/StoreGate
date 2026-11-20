@@ -2,7 +2,8 @@ import Foundation
 
 @main
 struct DeliveryFlowChecks {
-    static func main() throws {
+    @MainActor
+    static func main() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -69,6 +70,19 @@ struct DeliveryFlowChecks {
         precondition(project.activeStep == .review)
         precondition(!project.advance(.processing, note: "wrong", observed: wrong))
         precondition(project.advance(.processing, note: "Uploaded through Xcode", observed: project.identity))
+        var replaced = project
+        replaced.recordArchive(archive(replaced.identity, fingerprint: "different signed artifact"))
+        precondition(replaced.phase == .upload && replaced.conflictsWithUploadedBuild)
+        precondition(replaced.activeStep == .archive && replaced.uploadBlockers.contains(.archive))
+        precondition(!replaced.advance(.submission, note: "Existing build shown in the console", observed: replaced.identity))
+        replaced.replaceBuild("43")
+        replaced.recordArchive(archive(replaced.identity, fingerprint: "different signed artifact"))
+        precondition(!replaced.conflictsWithUploadedBuild)
+
+        var legacy = project
+        legacy.records[legacy.records.count - 1].archiveFingerprint = nil
+        legacy.recordArchive(archive(legacy.identity, fingerprint: "different signed artifact"))
+        precondition(legacy.conflictsWithUploadedBuild)
         precondition(!project.advance(.approved, note: "not reviewed", observed: project.identity))
         precondition(project.advance(.submission, note: "Processed, build 42 selectable", observed: project.identity))
         precondition(project.advance(.reviewQueue, note: "Waiting for Review", observed: project.identity))
@@ -136,12 +150,101 @@ struct DeliveryFlowChecks {
             .first { $0.pathExtension.hasPrefix("unreadable-") }
         let preservedData = try preserved.map { try Data(contentsOf: $0) }
         precondition(preservedData == bad)
-        print("Delivery workspace: prerequisites, stale audits, revisions, regional publication, restart, and recovery passed.")
+
+        try FileManager.default.removeItem(at: file)
+        do {
+            _ = try DeliveryWorkspace.read(file)
+            preconditionFailure("Missing primary was treated as a new workspace")
+        } catch DeliveryWorkspace.WriteError.primaryMissing { }
+        do {
+            try DeliveryWorkspace().write(file)
+            preconditionFailure("Overwrote recoverable workspace with an empty file")
+        } catch DeliveryWorkspace.WriteError.primaryMissing { }
+        let missingPrimaryRestored = try DeliveryWorkspace.restore(file)
+        precondition(missingPrimaryRestored.projects.first?.phase == .reviewQueue)
+
+        try verifyConflictingSave(at: root.appendingPathComponent("conflict.json"))
+        try await verifyArchiveLimits(at: root)
+        try await verifySignedArchive(at: root)
+        print("Delivery workspace: prerequisites, stale audits, revisions, regional publication, restart, recovery, and archive limits passed.")
     }
 
-    static func archive(_ identity: BuildIdentity, valid: Bool = true) -> ArchiveInspection {
+    @MainActor
+    static func verifyConflictingSave(at url: URL) throws {
+        let writer = DeliveryStore(url: url)
+        precondition(writer.add(name: "Shared", folder: "/tmp/project", bundleID: "com.example.project"))
+        let id = writer.workspace.projects[0].id
+        let other = DeliveryStore(url: url)
+        precondition(writer.update(id) { $0.reviewNotes = "Newer original" })
+        precondition(!other.update(id) { $0.reviewNotes = "Unsaved alternate" })
+        other.retrySave()
+        precondition(other.saveProblem != nil)
+        precondition(other.preservePendingAndReload())
+        precondition(other.workspace.projects[0].reviewNotes == "Newer original")
+        guard let copy = other.recoveryCopy else { preconditionFailure("No recovery copy") }
+        let recovered = try DeliveryWorkspace.read(copy)
+        precondition(recovered.projects[0].reviewNotes == "Unsaved alternate")
+        precondition(other.saveProblem == nil)
+    }
+
+    static func verifyArchiveLimits(at root: URL) async throws {
+        do {
+            _ = try ArchiveInspection.run("/bin/sleep", ["5"], deadline: .now() + .milliseconds(50))
+            preconditionFailure("A tool exceeded its deadline")
+        } catch ArchiveInspection.ToolError.timedOut { }
+        do {
+            _ = try ArchiveInspection.run("/usr/bin/head", ["-c", "4096", "/dev/zero"],
+                                          deadline: .now() + .seconds(5), limit: 512)
+            preconditionFailure("Accepted oversized tool output")
+        } catch ArchiveInspection.ToolError.tooMuchOutput { }
+        let oversized = root.appendingPathComponent("Oversized.xcarchive")
+        try FileManager.default.createDirectory(at: oversized, withIntermediateDirectories: true)
+        try Data(count: 4 * 1024 * 1024 + 1).write(to: oversized.appendingPathComponent("Info.plist"))
+        do {
+            _ = try await ArchiveInspection.inspect(oversized)
+            preconditionFailure("Accepted an oversized archive descriptor")
+        } catch {
+            precondition(error.localizedDescription.contains("大きすぎ"))
+        }
+    }
+
+    static func verifySignedArchive(at root: URL) async throws {
+        let archive = root.appendingPathComponent("Signed fixture.xcarchive")
+        let app = archive.appendingPathComponent("Products/Applications/Fixture.app")
+        let contents = app.appendingPathComponent("Contents")
+        let programs = contents.appendingPathComponent("MacOS")
+        try FileManager.default.createDirectory(at: programs, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: URL(fileURLWithPath: "/usr/bin/true"), to: programs.appendingPathComponent("Fixture"))
+
+        let identity = BuildIdentity(bundleID: "com.example.storegatefixture", version: "1.0", build: "1")
+        let identityFields = ["CFBundleIdentifier": identity.bundleID, "CFBundleShortVersionString": identity.version, "CFBundleVersion": identity.build]
+        var manifest = identityFields
+        manifest["ApplicationPath"] = "Applications/Fixture.app"
+        try writePlist(["ApplicationProperties": manifest], to: archive.appendingPathComponent("Info.plist"))
+        var appInfo = identityFields
+        appInfo["CFBundleExecutable"] = "Fixture"
+        appInfo["CFBundlePackageType"] = "APPL"
+        try writePlist(appInfo, to: contents.appendingPathComponent("Info.plist"))
+        let entitlements = root.appendingPathComponent("fixture-entitlements.plist")
+        try writePlist(["com.apple.security.app-sandbox": true], to: entitlements)
+        let signature = try ArchiveInspection.run(
+            "/usr/bin/codesign", ["--force", "--sign", "-", "--entitlements", entitlements.path, app.path],
+            includeErrors: true, deadline: .now() + .seconds(10)
+        )
+        precondition(signature.status == 0, String(decoding: signature.output, as: UTF8.self))
+        let result = try await ArchiveInspection.inspect(archive)
+        precondition(result.identity == identity && result.signatureValid && result.sandboxEnabled && result.fingerprint != nil,
+                     result.diagnostic)
+    }
+
+    static func writePlist(_ fields: [String: Any], to url: URL) throws {
+        let data = try PropertyListSerialization.data(fromPropertyList: fields, format: .xml, options: 0)
+        try data.write(to: url)
+    }
+
+    static func archive(_ identity: BuildIdentity, valid: Bool = true, fingerprint: String = "fixture") -> ArchiveInspection {
         ArchiveInspection(identity: identity, archiveName: "Fixture.xcarchive", path: "/tmp/Fixture.xcarchive",
                           signatureValid: valid, sandboxEnabled: valid, checkedAt: .now, diagnostic: "",
-                          fingerprint: valid ? "fixture" : nil)
+                          fingerprint: valid ? fingerprint : nil)
     }
 }

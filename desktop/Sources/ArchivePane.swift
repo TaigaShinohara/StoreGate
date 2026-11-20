@@ -27,6 +27,9 @@ struct ArchivePane: View {
                     WorkNotice(text: "このアーカイブは案件と一致しません。Xcodeの対象ターゲットと版を見て、選び直してください。")
                     ForEach(differences, id: \.self) { Text($0).textSelection(.enabled) }
                 }
+                if project.conflictsWithUploadedBuild {
+                    WorkNotice(text: "このビルド番号で、内容の異なるアーカイブをアップロード済みとして記録しています。Xcodeでビルド番号を上げて作り直し、下の「別のビルド番号に差し替える」から更新してください。")
+                }
                 if project.phase.editable {
                     Button(project.archive == nil && differences.isEmpty && error == nil ? "アーカイブを選ぶ…" : "アーカイブを選び直す…") {
                         choose()
