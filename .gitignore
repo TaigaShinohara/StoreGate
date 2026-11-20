@@ -10,3 +10,6 @@ docs/*_PR_DRAFT.md
 
 # Ruling Register exports are generated per commit
 exports/
+
+# Local macOS build output
+/desktop/.build/
