@@ -18,13 +18,53 @@ struct ListingFinding: Codable, Equatable, Sendable {
     let field: String
     let message: String
     let fix: String
+    var location: String? = nil
+    var detail: String? = nil
 }
 
 struct ListingReport: Codable, Equatable, Sendable {
     let findings: [ListingFinding]
     let checkedAt: Date
+    var engineFingerprint: String? = nil
+    var inputFingerprint: String? = nil
 
     var blocked: Bool { findings.contains { $0.severity == "critical" || $0.severity == "high" } }
+
+    func current(for draft: ListingDraft) -> Bool {
+        engineFingerprint == DeliveryAudit.listingEngineFingerprint
+            && inputFingerprint == DeliveryAudit.fingerprint(draft)
+    }
+}
+
+struct SourceReport: Codable, Equatable, Sendable {
+    let findings: [ListingFinding]
+    let fingerprint: String
+    let complete: Bool
+    let platform: String
+    let fileCount: Int
+    let issues: [String]
+    var engineFingerprint: String? = nil
+    var checkedAt: Date = .now
+    var blocked: Bool { findings.contains { $0.severity == "critical" || $0.severity == "high" } }
+
+    private enum CodingKeys: String, CodingKey {
+        case findings, fingerprint, complete, platform, fileCount, issues, engineFingerprint, checkedAt
+    }
+    init(findings: [ListingFinding], fingerprint: String, complete: Bool, platform: String, fileCount: Int, issues: [String]) {
+        self.findings = findings; self.fingerprint = fingerprint; self.complete = complete
+        self.platform = platform; self.fileCount = fileCount; self.issues = issues
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        findings = try c.decode([ListingFinding].self, forKey: .findings)
+        fingerprint = try c.decode(String.self, forKey: .fingerprint)
+        complete = try c.decode(Bool.self, forKey: .complete)
+        platform = try c.decode(String.self, forKey: .platform)
+        fileCount = try c.decode(Int.self, forKey: .fileCount)
+        issues = try c.decode([String].self, forKey: .issues)
+        engineFingerprint = try c.decodeIfPresent(String.self, forKey: .engineFingerprint)
+        checkedAt = try c.decodeIfPresent(Date.self, forKey: .checkedAt) ?? .now
+    }
 }
 
 struct ApplicableRule: Codable, Equatable, Identifiable, Sendable {
@@ -43,6 +83,23 @@ enum DeliveryAudit {
     private static let toolResources = Bundle.main.resourceURL?
         .appending(path: "StoreGateTools", directoryHint: .isDirectory)
 
+    static func fingerprint(_ draft: ListingDraft) -> String? {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(draft) else { return nil }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+    private static func engine(_ paths: [String]) -> String? {
+        guard let toolResources else { return nil }
+        var hash = SHA256()
+        for path in paths {
+            guard let data = try? Data(contentsOf: toolResources.appending(path: path)) else { return nil }
+            hash.update(data: data)
+        }
+        return hash.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+    static let listingEngineFingerprint = engine(["audit_bridge.py", "scripts/metadata-audit.py"])
+    static let sourceEngineFingerprint = engine(["audit_bridge.py", "scripts/macos-source-audit.py", "scripts/validate-privacy-manifest.py"])
+
     static let registerFingerprint: String? = {
         guard let toolResources else { return nil }
         let paths = ["data/ruling-register.json", "scripts/ruling-register.py", "data/rejection-patterns.json"]
@@ -60,7 +117,21 @@ enum DeliveryAudit {
         guard findings.allSatisfy({ severities.contains($0.severity) }) else {
             throw AuditError.invalidResponse
         }
-        return ListingReport(findings: findings, checkedAt: Date())
+        return ListingReport(findings: findings, checkedAt: Date(), engineFingerprint: listingEngineFingerprint, inputFingerprint: fingerprint(draft))
+    }
+
+    static func checkSource(folder: String) async throws -> SourceReport {
+        var report = try await request(.source, input: ["folder": folder], as: SourceReport.self)
+        guard report.findings.allSatisfy({ ["critical", "high", "medium", "low"].contains($0.severity) }) else { throw AuditError.invalidResponse }
+        report.engineFingerprint = sourceEngineFingerprint
+        return report
+    }
+
+    static func verifySource(_ project: DeliveryProject) async throws -> SourceReport {
+        let latest = try await checkSource(folder: project.folder)
+        guard latest.complete, !latest.blocked, latest.fingerprint == project.sourceReport?.fingerprint,
+              latest.engineFingerprint == project.sourceReport?.engineFingerprint else { throw AuditError.sourceChanged }
+        return latest
     }
 
     static func applicableRules(regions: [String], features: [String]) async throws -> [ApplicableRule] {
@@ -73,11 +144,11 @@ enum DeliveryAudit {
     }
 
     private enum Command: String, Sendable {
-        case listing, rules
+        case listing, rules, source
     }
 
     private enum AuditError: LocalizedError {
-        case missingResource, missingRuntime, invalidInput, invalidRegister, invalidResponse, timedOut, unavailable
+        case missingResource, missingRuntime, invalidInput, invalidRegister, invalidResponse, timedOut, unavailable, sourceChanged
 
         var errorDescription: String? {
             switch self {
@@ -88,6 +159,7 @@ enum DeliveryAudit {
             case .invalidResponse: "監査ツールから結果を取得できませんでした。StoreGateを入れ直してください。"
             case .timedOut: "監査が時間内に終わりませんでした。もう一度お試しください。"
             case .unavailable: "監査を実行できませんでした。もう一度お試しください。"
+            case .sourceChanged: "ソースが監査時から変わったか、確認が終わっていません。「適用ルールと実機」でソース監査と確認をやり直してください。"
             }
         }
     }

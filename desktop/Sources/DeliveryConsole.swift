@@ -154,7 +154,13 @@ struct ScopePane: View {
                 GridRow { Text("バージョン"); TextField("例 1.0", text: $draft.version).accessibilityLabel("バージョン") }
                 GridRow { Text("ビルド番号"); TextField("例 1", text: $draft.build).accessibilityLabel("ビルド番号") }
                 GridRow { Text("配信地域"); TextField("例 JP, US", text: $draft.regions).accessibilityLabel("配信地域") }
-                GridRow { Text("主要掲載言語"); TextField("例 ja", text: $draft.locale).accessibilityLabel("主要掲載言語") }
+                GridRow {
+                    Text("主要掲載言語")
+                    Picker("主要掲載言語", selection: $draft.locale) {
+                        if !StoreLocales.codes.contains(draft.locale) { Text("保存値を選び直す：\(draft.locale)").tag(draft.locale) }
+                        ForEach(StoreLocales.codes, id: \.self) { Text(StoreLocales.label($0)).tag($0) }
+                    }.labelsHidden().accessibilityLabel("主要掲載言語")
+                }
             }
             Text("配信地域は2文字の国コードです。複数指定すると各地域の公開確認が必要です。")
                 .font(.callout).foregroundStyle(.secondary)
@@ -233,7 +239,7 @@ struct CheckCard: View {
 
     var body: some View {
         WorkCard(title: key.title) {
-            if let saved = project.checks[key] {
+            if let saved = project.checks[key], key != .source || !project.phase.editable || project.sourceReady {
                 Label(saved.notApplicable ? "対象外として記録済み" : "本人が確認済み", systemImage: "checkmark.circle")
                 Text(saved.note).textSelection(.enabled)
                 Text(saved.date.formatted(date: .abbreviated, time: .shortened))
@@ -253,7 +259,9 @@ struct CheckCard: View {
                 if canSkip {
                     Toggle("この案件には当てはまらない", isOn: $nonApplicable)
                 }
-                if needsArchive && !project.hasMatchingArchive && !nonApplicable {
+                if key == .source && !project.sourceReady {
+                    Text("先に上のMacソース監査を実行し、指摘を解消してください。").foregroundStyle(.secondary)
+                } else if needsArchive && !project.hasMatchingArchive && !nonApplicable {
                     Text("先に配布用ビルドの照合を済ませてください。").foregroundStyle(.secondary)
                 } else if project.phase.editable {
                     TextField(nonApplicable ? "対象外の理由" : "見た画面・項目・結果など", text: $note, axis: .vertical)

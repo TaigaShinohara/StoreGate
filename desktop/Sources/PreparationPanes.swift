@@ -9,13 +9,14 @@ struct ChecksPane: View {
     @State private var issue: String?
 
     var body: some View {
+        MacSourcePane(project: project, store: store)
         WorkCard(title: "配信地域・機能に当てはまるルール") {
             if !project.scopeConfirmed {
                 Text("先に配信条件を保存してください。")
             } else {
                 Text("配信地域 \(project.scope.regionCodes.joined(separator: ", "))。StoreGateに同梱された規制台帳を、この案件の設定で照合します。")
                     .foregroundStyle(.secondary)
-                if project.rulesCurrent, let checkedAt = project.rulesCheckedAt, let rules = project.rules {
+                if (project.rulesCurrent || !project.phase.editable), let checkedAt = project.rulesCheckedAt, let rules = project.rules {
                     Text("台帳の照合 \(checkedAt.formatted(date: .abbreviated, time: .shortened)) · \(rules.count)件")
                     if rules.isEmpty {
                         Text("同梱台帳に該当項目はありません。他の確認は下に続きます。")
@@ -32,7 +33,7 @@ struct ChecksPane: View {
             }
         }
         if let rows = project.rules {
-            if project.rulesCurrent {
+            if project.rulesCurrent || !project.phase.editable {
                 ForEach(rows) { row in
                     RuleCard(row: row, project: project, store: store)
                 }
@@ -114,6 +115,7 @@ struct ListingPane: View {
     let store: DeliveryStore
     @State private var selectedLanguage: String?
     @State private var newLanguage = ""
+    @State private var localeToRemove: String?
     @State private var savingAudit = false
     @State private var issue: String?
     @FocusState private var fieldFocus: String?
@@ -137,7 +139,8 @@ struct ListingPane: View {
     private var report: ListingReport? {
         let savedDraft = project.draft(for: language)
         let currentDraft = store.current(project.id)?.draft(for: language) ?? savedDraft
-        return currentDraft == savedDraft ? project.report(for: language) : nil
+        guard currentDraft == savedDraft, let report = project.report(for: language) else { return nil }
+        return !project.phase.editable || report.current(for: currentDraft) ? report : nil
     }
 
     var body: some View {
@@ -147,24 +150,46 @@ struct ListingPane: View {
             } else {
                 WorkCard(title: "掲載原稿を検査する") {
                     Picker("掲載言語", selection: languageSelection) {
-                        ForEach(availableLocales, id: \.self) { Text($0).tag($0) }
+                        ForEach(availableLocales, id: \.self) { Text(StoreLocales.label($0)).tag($0) }
                     }
                     .disabled(savingAudit)
                     if project.phase.editable {
                         HStack {
-                            TextField("追加する言語のコード", text: $newLanguage)
-                                .accessibilityLabel("追加する掲載言語")
+                            Picker("追加する掲載言語", selection: $newLanguage) {
+                                Text("言語を選ぶ").tag("")
+                                ForEach(StoreLocales.codes.filter { !availableLocales.contains($0) }, id: \.self) {
+                                    Text(StoreLocales.label($0)).tag($0)
+                                }
+                            }
                             Button("掲載言語を追加") { addLocale() }
                                 .disabled(savingAudit || !localeIsValid(newLanguage) || availableLocales.contains(newLanguage))
+                            if language != project.scope.locale {
+                                Button("この掲載言語を削除…", role: .destructive) { localeToRemove = language }
+                                    .disabled(savingAudit)
+                            }
                         }
                     }
                     if project.phase.editable {
                         Text("入力は自動で保存されます。原稿の変更後は、掲載情報を検査してください。")
                             .font(.callout).foregroundStyle(.secondary)
                     }
+                    if project.report(for: language) != nil && report == nil {
+                        WorkNotice(text: "監査ルールが更新されたため、この原稿を再検査してください。保存した原稿は保持しています。")
+                    }
                     editor.id(language)
                     actions
                     result
+                }
+                .alert("この掲載言語を削除しますか？", isPresented: Binding(get: { localeToRemove != nil }, set: { if !$0 { localeToRemove = nil } })) {
+                    Button("キャンセル", role: .cancel) { localeToRemove = nil }
+                    Button("原稿と監査結果を削除", role: .destructive) {
+                        guard let locale = localeToRemove else { return }
+                        store.update(project.id) { $0.removeLocale(locale) }
+                        if store.saveProblem == nil { selectedLanguage = project.scope.locale; localeToRemove = nil }
+                    }
+                } message: {
+                    let locale = localeToRemove ?? language
+                    Text("\(StoreLocales.label(locale)) の原稿と監査結果を削除します。アプリ名：\(project.draft(for: locale).name)。主要掲載言語は残ります。")
                 }
                 .onChange(of: language) { _, _ in
                     issue = nil
@@ -260,8 +285,7 @@ struct ListingPane: View {
             ForEach(Array(report.findings.enumerated()), id: \.offset) { _, item in
                 VStack(alignment: .leading, spacing: 4) {
                     Text("\(severity(item.severity)) · \(fieldLabel(item.field))").font(.callout.bold())
-                    Text(item.message)
-                    if !item.fix.isBlank { Text(item.fix).foregroundStyle(.secondary) }
+                    FindingGuidance(finding: item)
                     if ["name", "description", "subtitle", "keywords", "privacy_url", "support_url", "terms_url"].contains(item.field) {
                         Button("\(fieldLabel(item.field))の入力欄に移動") { fieldFocus = item.field }
                             .disabled(!project.phase.editable)
@@ -285,7 +309,7 @@ struct ListingPane: View {
     }
 
     private func localeIsValid(_ locale: String) -> Bool {
-        locale.range(of: "^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$", options: .regularExpression) != nil
+        StoreLocales.canonical(locale) != nil
     }
 
     private func addLocale() {

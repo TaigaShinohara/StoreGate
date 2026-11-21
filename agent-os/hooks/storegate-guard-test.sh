@@ -1980,7 +1980,9 @@ rm -rf "$D"
 
 # ===== Rule precision round (October 2026 review). each case failed on the guard before its fix =====
 rr_run() { OUT="$(bash "$GUARD" "$1" 2>&1)"; RC=$?; }
-rr_has() { printf '%s\n' "$OUT" | grep -q -e "$1"; }
+# Consume the full report: grep -q can close the pipe before printf finishes,
+# making a successful match fail under pipefail on macOS.
+rr_has() { printf '%s\n' "$OUT" | grep -e "$1" >/dev/null; }
 rr_hook() {  # $1 command, $2 project dir. sets OUT (stdout and stderr) and RC
   OUT="$(python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]}}))' "$1" | CLAUDE_PROJECT_DIR="$2" bash "$GUARD" 2>&1)"; RC=$?
 }

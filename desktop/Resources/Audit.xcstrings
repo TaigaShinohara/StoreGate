@@ -1,0 +1,336 @@
+{
+  "sourceLanguage": "ja",
+  "strings": {
+    "finding.unknown.message": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この項目に確認が必要な指摘があります。"
+          }
+        }
+      }
+    },
+    "finding.unknown.fix": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "入力欄を確認してください。判断に必要な原文は詳細で読めます。"
+          }
+        }
+      }
+    },
+    "finding.BOTH-MISSING-REQUIRED-METADATA.message": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "掲載に必要な項目が空です。"
+          }
+        }
+      }
+    },
+    "finding.BOTH-MISSING-REQUIRED-METADATA.fix": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上の該当する入力欄に、掲載する内容を記入して再検査してください。"
+          }
+        }
+      }
+    },
+    "finding.BOTH-METADATA-DECORATION.message": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文字数、記号、強調表現などに指摘があります。"
+          }
+        }
+      }
+    },
+    "finding.BOTH-METADATA-DECORATION.fix": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "項目の文字数を減らし、順位や価格の強調、不要な絵文字・大文字を見直してください。具体的な箇所は原文で確認できます。"
+          }
+        }
+      }
+    },
+    "finding.APPLE-2.3-CROSS-PLATFORM-REFERENCE.message": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "別のプラットフォームへの言及があります。"
+          }
+        }
+      }
+    },
+    "finding.APPLE-2.3-CROSS-PLATFORM-REFERENCE.fix": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このMac版の機能を説明する文面に直し、他ストアへの誘導を見直してください。"
+          }
+        }
+      }
+    },
+    "finding.APPLE-2.3-FUTURE-FUNCTIONALITY.message": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今のビルドにない将来の機能を約束する表現があります。"
+          }
+        }
+      }
+    },
+    "finding.APPLE-2.3-FUTURE-FUNCTIONALITY.fix": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今回配信する版で実際に使える機能だけを説明してください。"
+          }
+        }
+      }
+    },
+    "finding.APPLE-2.3-NEGATIVE-APPLE-SENTIMENT.message": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AppleやOSの不具合に関する否定的な表現があります。"
+          }
+        }
+      }
+    },
+    "finding.APPLE-2.3-NEGATIVE-APPLE-SENTIMENT.fix": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリ自体の機能を説明する文面に見直してください。"
+          }
+        }
+      }
+    },
+    "finding.BOTH-PLACEHOLDER.message": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仮の文言やテスト用の内容が残っている可能性があります。"
+          }
+        }
+      }
+    },
+    "finding.BOTH-PLACEHOLDER.fix": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "該当する入力欄を確認し、実際の掲載内容に置き換えてください。"
+          }
+        }
+      }
+    },
+    "finding.APPLE-2.3-CURSE-WORD.message": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不適切な言葉が含まれている可能性があります。"
+          }
+        }
+      }
+    },
+    "finding.APPLE-2.3-CURSE-WORD.fix": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "原文で該当箇所を確認し、掲載に適した表現に直してください。"
+          }
+        }
+      }
+    },
+    "finding.APPLE-2.3-KEYWORD-FORMAT.message": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "キーワードの区切りや重複を見直せます。"
+          }
+        }
+      }
+    },
+    "finding.APPLE-2.3-KEYWORD-FORMAT.fix": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "カンマの直後の不要な空白や、アプリ名・サブタイトルとの重複を減らしてください。"
+          }
+        }
+      }
+    },
+    "finding.BOTH-MISSING-PRIVACY-POLICY.message": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プライバシーポリシーのURLが未入力です。"
+          }
+        }
+      }
+    },
+    "finding.BOTH-MISSING-PRIVACY-POLICY.fix": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プライバシーURL欄に公開済みのポリシーURLを入力してください。実機とストアで開けることも別途確認します。"
+          }
+        }
+      }
+    },
+    "finding.BOTH-INVALID-METADATA-URL.message": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "URLの形式が正しくありません。"
+          }
+        }
+      }
+    },
+    "finding.BOTH-INVALID-METADATA-URL.fix": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "該当するURL欄に、https://から始まる完全なURLを入力してください。"
+          }
+        }
+      }
+    },
+    "finding.APPLE-MISSING-SUPPORT-URL.message": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サポートURLが未入力です。"
+          }
+        }
+      }
+    },
+    "finding.APPLE-MISSING-SUPPORT-URL.fix": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サポートURL欄に、問い合わせ先を確認できる公開ページのURLを入力してください。"
+          }
+        }
+      }
+    },
+    "finding.APPLE-3.1.2-MISLEADING-PRICING.message": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サブスクリプションの説明に利用規約への案内が足りません。"
+          }
+        }
+      }
+    },
+    "finding.APPLE-3.1.2-MISLEADING-PRICING.fix": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "説明文と課金画面に、利用規約とプライバシーポリシーのリンクを記載してください。"
+          }
+        }
+      }
+    },
+    "finding.CHINA-AI-REFERENCES.message": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外部AIサービスへの言及があります。"
+          }
+        }
+      }
+    },
+    "finding.CHINA-AI-REFERENCES.fix": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "中国を配信対象にする場合は、適用される要件と掲載内容を確認してください。"
+          }
+        }
+      }
+    },
+    "finding.BOTH-UNREACHABLE-METADATA-URL.message": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "掲載URLの形式や到達性に指摘があります。"
+          }
+        }
+      }
+    },
+    "finding.BOTH-UNREACHABLE-METADATA-URL.fix": {
+      "comment": "Mac版の掲載監査で示す理由・対処。原稿そのものの翻訳ではない。",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "原文のURLを確認し、公開ページを開ける状態に直してください。"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

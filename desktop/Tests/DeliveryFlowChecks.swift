@@ -31,13 +31,12 @@ struct DeliveryFlowChecks {
         draft.privacyURL = "https://example.org/privacy"
         project.setListing(draft, locale: "ja")
         precondition(project.listingReport == nil)
-        let withoutFindings = ListingReport(findings: [], checkedAt: .now)
-        project.recordReport(withoutFindings, for: empty, locale: "ja")
+        project.recordReport(cleanReport(empty), for: empty, locale: "ja")
         precondition(project.listingReport == nil)
-        project.recordReport(withoutFindings, for: draft, locale: "ja")
+        project.recordReport(cleanReport(draft), for: draft, locale: "ja")
         project.setListing(ListingDraft(), locale: "en-US")
         precondition(project.listingBlocked)
-        project.recordReport(withoutFindings, for: ListingDraft(), locale: "en-US")
+        project.recordReport(cleanReport(ListingDraft()), for: ListingDraft(), locale: "en-US")
         precondition(!project.listingBlocked)
         project.setNotes("Open the Notes screen and create a note")
         project.setCheck(.storefront, note: "Both languages and screenshots match", notApplicable: false)
@@ -54,6 +53,7 @@ struct DeliveryFlowChecks {
         project.setCheck(.runtime, note: "This must be refused", notApplicable: false)
         precondition(project.checks[.runtime] == nil)
         project.recordArchive(archive(project.identity))
+        project.recordSource(sourceReport())
         for check in [DeliveryCheck.source, .privacy, .runtime, .distribution, .storefront] {
             project.setCheck(check, note: "Verified evidence", notApplicable: false)
         }
@@ -93,6 +93,52 @@ struct DeliveryFlowChecks {
         precondition(!external.observeExistingStatus(.approved, note: "wrong app", observed: wrong))
         precondition(external.observeExistingStatus(.approved, note: "Pending Developer Release", observed: external.identity))
         precondition(external.observedBeforeReadiness && external.records.count == 1)
+
+        // A typo cannot add an unsupported locale or duplicate a differently cased locale.
+        var languageCase = project
+        languageCase.phase = .upload
+        languageCase.setListing(ListingDraft(), locale: "zz")
+        precondition(languageCase.localeDrafts["zz"] == nil)
+        languageCase.setListing(draft, locale: "EN_us")
+        precondition(languageCase.localeDrafts["en-US"] == draft && languageCase.localeDrafts["EN_us"] == nil)
+        languageCase.removeLocale("en-US")
+        precondition(languageCase.localeDrafts["en-US"] == nil && languageCase.localeReports["en-US"] == nil)
+        languageCase.removeLocale("ja")
+        precondition(languageCase.listing == project.listing)
+        var invalidLocale = scope; invalidLocale.locale = "zz"
+        precondition(!invalidLocale.isValid)
+        precondition(StoreLocales.canonical("ZH_hans") == "zh-Hans" && StoreLocales.codes.count == 50)
+
+        // Current gates expire or change with their engine; historical evidence remains complete.
+        var historical = project
+        historical.phase = .published
+        historical.rulesCheckedAt = .distantPast
+        historical.listingReport?.engineFingerprint = "old checker"
+        precondition(historical.completed(.checks) && historical.completed(.listing))
+        historical.phase = .upload
+        precondition(!historical.completed(.checks) && historical.listingBlocked)
+        var legacyReport = project
+        legacyReport.phase = .upload
+        legacyReport.listingReport?.inputFingerprint = nil
+        precondition(legacyReport.listingBlocked)
+
+        var edited = project
+        edited.phase = .upload
+        edited.setBasicInfo(name: "Renamed", folder: project.folder, bundleID: project.bundleID)
+        precondition(edited.archive == project.archive && edited.checks == project.checks)
+        edited.setBasicInfo(name: "Renamed", folder: "/tmp/moved", bundleID: "com.example.corrected")
+        precondition(edited.archive == nil && edited.sourceReport == nil && edited.storeAppID.isEmpty)
+        precondition(edited.checks[.runtime] == nil && edited.checks[.source] == nil && edited.checks[.account] == nil)
+        var changedSource = project; changedSource.phase = .upload
+        changedSource.recordSource(sourceReport(fingerprint: "changed files"))
+        precondition(changedSource.checks[.source] == nil)
+
+        let selected = try ProjectLocation.url(root.path)
+        precondition(selected.isFileURL && selected.hasDirectoryPath)
+        do { _ = try ProjectLocation.url("https://host.invalid/path"); preconditionFailure("accepted remote path") }
+        catch ProjectLocation.InputError.invalidPath { }
+        do { _ = try ProjectLocation.url(root.appendingPathComponent("missing").path); preconditionFailure("accepted missing folder") }
+        catch ProjectLocation.InputError.missingPath { }
 
         var workspace = DeliveryWorkspace(projects: [project], lastProject: project.id, savedAt: .now)
         try workspace.write(file)
@@ -240,6 +286,17 @@ struct DeliveryFlowChecks {
     static func writePlist(_ fields: [String: Any], to url: URL) throws {
         let data = try PropertyListSerialization.data(fromPropertyList: fields, format: .xml, options: 0)
         try data.write(to: url)
+    }
+
+    static func cleanReport(_ draft: ListingDraft) -> ListingReport {
+        ListingReport(findings: [], checkedAt: .now, engineFingerprint: DeliveryAudit.listingEngineFingerprint,
+                      inputFingerprint: DeliveryAudit.fingerprint(draft))
+    }
+
+    static func sourceReport(fingerprint: String = "source fixture") -> SourceReport {
+        var report = SourceReport(findings: [], fingerprint: fingerprint, complete: true, platform: "macos", fileCount: 1, issues: [])
+        report.engineFingerprint = DeliveryAudit.sourceEngineFingerprint
+        return report
     }
 
     static func archive(_ identity: BuildIdentity, valid: Bool = true, fingerprint: String = "fixture") -> ArchiveInspection {

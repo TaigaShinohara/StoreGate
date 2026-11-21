@@ -34,7 +34,7 @@ case "${1:-}" in
   --test)
     swift_build "$here/Sources/ReleaseFlow.swift" "$here/Tests/ReleaseFlowChecks.swift" -o "$build/ReleaseFlowChecks"
     "$build/ReleaseFlowChecks"
-    swift_build "$here/Sources/ReleaseFlow.swift" "$here/Sources/DeliveryFlow.swift" \
+    swift_build "$here/Sources/ReleaseFlow.swift" "$here/Sources/DeliveryInputs.swift" "$here/Sources/DeliveryFlow.swift" \
       "$here/Sources/ArchiveInspection.swift" "$here/Sources/DeliveryAudit.swift" \
       "$here/Sources/DeliveryStore.swift" \
       "$here/Tests/DeliveryFlowChecks.swift" -o "$build/DeliveryFlowChecks"
@@ -47,7 +47,9 @@ case "${1:-}" in
     mkdir -p "$resources/scripts" "$resources/data"
     build_icon
     cp "$here/Resources/audit_bridge.py" "$resources/"
-    cp "$repo/scripts/metadata-audit.py" "$repo/scripts/ruling-register.py" "$resources/scripts/"
+    cp "$repo/scripts/metadata-audit.py" "$repo/scripts/ruling-register.py" \
+      "$repo/scripts/macos-source-audit.py" "$repo/scripts/validate-privacy-manifest.py" "$resources/scripts/"
+    xcrun xcstringstool compile "$here/Resources/Audit.xcstrings" --output-directory "$bundle/Contents/Resources"
     cp "$repo/data/rejection-patterns.json" "$repo/data/ruling-register.json" "$resources/data/"
     cp "$repo/LICENSE" "$repo/NOTICE" "$resources/"
     /usr/bin/plutil -lint "$here/Info.plist"

@@ -14,17 +14,17 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_GUARD = REPO / "agent-os" / "hooks" / "storegate-guard.sh"
 DEFAULT_REGISTER = REPO / "data" / "ruling-register.json"
-STORE_OF = {"ios": "apple", "android": "google"}
+STORE_OF = {"ios": "apple", "macos": "apple", "android": "google"}
 MAX_WAIVER_DAYS = 180
 LINE = re.compile(r"^\s+\[(CRITICAL|HIGH|MEDIUM)\]\s+(\S+)\s+(.*)$")
 SUMMARY = re.compile(r"^Summary\. critical=(\d+) high=(\d+) medium=(\d+)$")
 COVERAGE = re.compile(
-    r"^Coverage\. (complete|incomplete) ios=([01]) android=([01]) web=([01])(?: reason=(.*))?$"
+    r"^Coverage\. (complete|incomplete) ios=([01]) android=([01]) web=([01])(?: macos=([01]))?(?: reason=(.*))?$"
 )
 RANK = {"READY": 0, "READY_WITH_ACTIONS": 1, "NOT_CHECKED": 2, "BLOCKED": 3}
 EXIT = {"READY": 0, "BLOCKED": 2, "NOT_CHECKED": 1, "READY_WITH_ACTIONS": 3}
 LEVEL = {"critical": "error", "high": "warning", "medium": "note"}
-PLATFORMS = ("ios", "android", "web")
+PLATFORMS = ("ios", "android", "web", "macos")
 WAIVER_TEXT = (
     "app",
     "finding_id",
@@ -333,8 +333,8 @@ def sweep_app(app, guard, waivers, today, timeout, register=None):
         result.update(verdict="NOT_CHECKED", note=problem)
         return result
 
-    state, ios, android, web, why = coverages[0]
-    covered = {"ios": ios == "1", "android": android == "1", "web": web == "1"}
+    state, ios, android, web, macos, why = coverages[0]
+    covered = {"ios": ios == "1", "android": android == "1", "web": web == "1", "macos": macos == "1"}
     result["coverage"] = {"state": state, **covered, "reason": why or ""}
 
     present = set()

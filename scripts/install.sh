@@ -335,7 +335,7 @@ verify() {
     fi
   fi
   local missing="" p
-  for p in SKILL.md data/rejection-patterns.json data/regulatory-deadlines.json docs/PRE-SUBMISSION-CHECKLIST.md references scripts/deadline-checker.py scripts/validate-privacy-manifest.py scripts/android-target-sdk.py templates .citation-allowlist; do
+  for p in SKILL.md data/rejection-patterns.json data/regulatory-deadlines.json docs/PRE-SUBMISSION-CHECKLIST.md references scripts/deadline-checker.py scripts/validate-privacy-manifest.py scripts/macos-source-audit.py scripts/android-target-sdk.py templates .citation-allowlist; do
     [ -e "$SKILL/$p" ] || missing="$missing $p"
   done
   if [ -z "$missing" ]; then good "skill payload complete at $SHOWN/skills/app-store-compliance"; else fail "skill payload is missing.$missing"; fi

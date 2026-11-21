@@ -10,13 +10,14 @@ HOOK_LOG="${HOME:-}/.claude/hooks/hook-log.sh"
 [ -f "$HOOK_LOG" ] && source "$HOOK_LOG" 2>/dev/null || true
 log_err() { if type hlog_error >/dev/null 2>&1; then hlog_error "app-store-compliance-guard" "$@"; else echo "app-store-compliance-guard: $*" >&2; fi; }
 
-CRIT=0; HIGH=0; MED=0; ANY_IOS=0; ANY_AND=0; ANY_NATIVE=0; ANY_RN=0; ANY_WEB=0; ANY_NEEDS_NATIVE=0; NATIVE_HINT=""; UNCHECKED=""; EXPO_READ=0; CHECKS_INCOMPLETE=""
+CRIT=0; HIGH=0; MED=0; ANY_IOS=0; ANY_MAC=0; ANY_AND=0; ANY_NATIVE=0; ANY_RN=0; ANY_WEB=0; ANY_NEEDS_NATIVE=0; NATIVE_HINT=""; UNCHECKED=""; EXPO_READ=0; CHECKS_INCOMPLETE=""
 # Repository guards use their own payload. Global guards may use the shared
 # skill only when its ownership registry names this exact installed guard.
 resolve_helper() {
-  local name="$1" candidate guard_dir guard_path shared
+  local name="$1" candidate guard_dir guard_path guard_alias shared
   guard_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)" || return 1
   guard_path="$guard_dir/$(basename "$0")"
+  guard_alias="$(cd "$(dirname "$0")" 2>/dev/null && pwd -L)/$(basename "$0")"
   # ../../scripts here belongs to the application, not StoreGate. Never borrow it
   # or a global install to cover up an incomplete repository hook installation.
   case "$guard_dir" in
@@ -31,7 +32,7 @@ resolve_helper() {
   fi
   for shared in "$guard_dir/../skills/app-store-compliance" "${HOME:-}/.agents/skills/app-store-compliance"; do
     if [ -f "$shared/.guards" ] && [ -f "$shared/scripts/$name" ] && \
-      awk -F '\t' -v path="$guard_path" 'NF == 2 && $2 == path { found=1 } END { exit !found }' "$shared/.guards"; then
+      awk -F '\t' -v path="$guard_path" -v alias="$guard_alias" 'NF == 2 && ($2 == path || $2 == alias) { found=1 } END { exit !found }' "$shared/.guards"; then
       printf '%s\n' "$shared/scripts/$name"; return 0
     fi
   done
@@ -611,7 +612,7 @@ finding() {  # severity id title fix [src|manifest regex]. The optional pair nam
   local t w=""
   case "$FOUND_IDS" in *"|$1:$2|"*) [ "$POOL_PASS" -eq 1 ] && return 0 ;; esac
   FOUND_IDS="$FOUND_IDS|$1:$2|"
-  [ -n "${5:-}" ] && w="$(hit_file "$5" "${6:-}")"
+  if [ "${5:-}" = path ]; then w="${6:-}"; else [ -n "${5:-}" ] && w="$(hit_file "$5" "${6:-}")"; fi
   case "$1" in
     critical) CRIT=$((CRIT+1)); t="  [CRITICAL] $2  $3" ;;
     high)     HIGH=$((HIGH+1)); t="  [HIGH]     $2  $3" ;;
@@ -636,7 +637,7 @@ XPLAT_IAP='in_app_purchase|purchases_flutter|flutter_inapp_purchase|react-native
 find_app() {  # find_app <maxdepth> <find name expression...>
   local depth="$1"; shift
   find "$DIR" -mindepth 1 -maxdepth "$depth" \
-    \( -type d \( -path '*/.github/hooks/storegate' -o -name node_modules -o -name Pods -o -name .git -o -name build -o \( -name dist -not -path '*/src/dist' \) \
+    \( -type d \( -path '*/.github/hooks/storegate' -o -name node_modules -o -name Pods -o -name .git -o -name .build -o -name .local -o -name build -o \( -name dist -not -path '*/src/dist' \) \
       -o -name DerivedData -o -name vendor -o -name .dart_tool -o -name Carthage -o -name .pub-cache \
       ${NESTED_PRUNE[@]+"${NESTED_PRUNE[@]}"} \) -prune \) \
     -o \( "$@" \) -print 2>/dev/null
@@ -696,7 +697,7 @@ scan_tree() {
 # bundled web output (dist) never ship in the binary, and a virtualenv's vendored JSON otherwise
 # reads as app source. .xcprivacy is scanned because NSPrivacyCollectedDataTypes lives there.
 find "$DIR" -mindepth 1 \
-  \( -type d \( -path '*/.github/hooks/storegate' -o -name node_modules -o -name Pods -o -name .git -o -name build -o \( -name dist -not -path '*/src/dist' \) \
+  \( -type d \( -path '*/.github/hooks/storegate' -o -name node_modules -o -name Pods -o -name .git -o -name .build -o -name .local -o -name build -o \( -name dist -not -path '*/src/dist' \) \
     -o -name DerivedData -o -name vendor -o -name .dart_tool -o -name Carthage \
     -o -name '*Tests' -o -name androidTest -o -name __tests__ -o -name test -o -name tests \
     -o -name integration_test -o -name .venv -o -name venv -o -name site-packages -o -name .pub-cache \
@@ -712,11 +713,41 @@ find "$DIR" -mindepth 1 \
   > "$FILELIST" || : 2>/dev/null >> "$FILELIST" || SCAN_ERROR="the file list could not be written to $FILELIST"
 build_blob
 CODE_STATE=""
+IS_MAC=0
+# Mac source checks have their own scope; never label a macOS-only target as iOS.
+local mac_helper mac_kind mac_rows mac_rc sev rule title fix location
+mac_helper="$(resolve_helper macos-source-audit.py || true)"
+if [ -n "$mac_helper" ] && tool_ok python3 -c pass; then
+  mac_kind="$(python3 "$mac_helper" "$DIR" --probe 2>/dev/null)"
+  if [ "$mac_kind" = macos ]; then
+    IS_MAC=1; IS_IOS=0; IS_AND=0; IS_WEB=0; NEEDS_NATIVE=0
+    ANY_MAC=1; ANY_NATIVE=1
+    mac_rows="$(python3 "$mac_helper" "$DIR" --guard-lines 2>/dev/null)"; mac_rc=$?
+    [ "$mac_rc" -eq 0 ] || [ "$mac_rc" -eq 2 ] || mark_incomplete "Mac source audit did not complete"
+    while IFS=$'\t' read -r sev rule title fix location; do
+      case "$sev" in
+        Platforms.*) echo "$sev" ;;
+        INCOMPLETE) mark_incomplete "$rule" ;;
+        critical|high|medium|low) [ "$location" = - ] && location=""; finding "$sev" "$rule" "$title" "$fix" path "$location" ;;
+      esac
+    done <<MACROWS
+$mac_rows
+MACROWS
+    echo "Mac scope. SDK configuration, permission purpose strings, HTTP endpoints, privacy policy references and Privacy Manifest. Signing, runtime and store declarations require separate evidence."
+    return
+  elif [ "$mac_kind" = mixed ]; then
+    ANY_MAC=1; mark_incomplete "mixed macOS and other targets require a separate Mac app source scope"
+  fi
+elif grep -Eq 'SDKROOT[[:space:]]*=[[:space:]]*"?macosx|<key>LSMinimumSystemVersion</key>' "$FILELIST.blob" 2>/dev/null; then
+  mark_incomplete "macOS source helper or Python 3 is missing"
+  IS_IOS=0; IS_AND=0; IS_WEB=0; IS_MAC=1; ANY_MAC=1; ANY_NATIVE=1; NEEDS_NATIVE=0
+  return
+fi
 
 # ----- platform detection -----
 # Every find below pipes into `grep .`, never `grep -q .`, for the reason in release_string_has:
 # grep -q exits on the first match, find dies of SIGPIPE, and pipefail turns "found" into "missing".
-IS_IOS=0; IS_AND=0; IS_WEB=0  # depth 12, the reach of the manifest probe. depth 4 left packages/mobile/app/ios invisible (issue #612)
+IS_MAC=0; IS_IOS=0; IS_AND=0; IS_WEB=0  # depth 12, the reach of the manifest probe. depth 4 left packages/mobile/app/ios invisible (issue #612)
 find_app 12 -name '*.xcodeproj' -o -name '*.xcworkspace' -o -name 'Package.swift' -o -name 'Podfile' | grep . >/dev/null && IS_IOS=1
 find_app 12 -name 'Info.plist' | grep . >/dev/null && IS_IOS=1
 find_app 12 -name 'AndroidManifest.xml' -o -name 'build.gradle' -o -name 'build.gradle.kts' | grep . >/dev/null && IS_AND=1
@@ -1716,9 +1747,9 @@ EOF2
     flush_findings
     # One scannable sibling must not speak for a root the store checks never ran on.
     # The project root scanned only beside a linked app, with no marker and nothing found, is not an app (#657).
-    if [ "${ROOT%/}" = "$PROJECT_ROOT" ] && [ "$IS_IOS" -eq 0 ] && [ "$IS_AND" -eq 0 ] && [ "$IS_WEB" -eq 0 ] && [ "$NEEDS_NATIVE" -eq 0 ] && ! dir_has_app_marker "$PROJECT_ROOT"; then
+    if [ "${ROOT%/}" = "$PROJECT_ROOT" ] && [ "${IS_MAC:-0}" -eq 0 ] && [ "$IS_IOS" -eq 0 ] && [ "$IS_AND" -eq 0 ] && [ "$IS_WEB" -eq 0 ] && [ "$NEEDS_NATIVE" -eq 0 ] && ! dir_has_app_marker "$PROJECT_ROOT"; then
       :
-    elif [ "$IS_IOS" -eq 0 ] && [ "$IS_AND" -eq 0 ] && { [ "$IS_WEB" -eq 0 ] || [ "$NEEDS_NATIVE" -eq 1 ]; }; then
+    elif [ "${IS_MAC:-0}" -eq 0 ] && [ "$IS_IOS" -eq 0 ] && [ "$IS_AND" -eq 0 ] && { [ "$IS_WEB" -eq 0 ] || [ "$NEEDS_NATIVE" -eq 1 ]; }; then
       UNCHECKED="${UNCHECKED:+$UNCHECKED, }${ROOT#"$PROJECT_ROOT"/}"
     fi
   done <<EOF
@@ -1739,7 +1770,12 @@ else
   scan_tree
   flush_findings
 fi
-print_deadlines
+if [ "$ANY_MAC" -eq 1 ]; then echo "Mac coverage. static source checks ran; manual release evidence remains required."; fi
+if [ "$ANY_MAC" -eq 1 ] && [ "$ANY_IOS" -eq 0 ] && [ "$ANY_AND" -eq 0 ]; then
+  echo "Mac release requirements. Confirm region-specific rules in the Ruling Register and manual checklist."
+else
+  print_deadlines
+fi
 
 # ===== summary and exit =====
 echo ""
@@ -1750,7 +1786,7 @@ COV_WHY=""
 [ -n "$CHECKS_INCOMPLETE" ] && COV_WHY="${COV_WHY:+$COV_WHY; }$CHECKS_INCOMPLETE"
 [ -n "$UNCHECKED" ] && COV_WHY="${COV_WHY:+$COV_WHY; }no native project in $UNCHECKED"
 { [ "$ANY_NATIVE" -eq 0 ] && { [ "$ANY_WEB" -eq 0 ] || [ "$ANY_NEEDS_NATIVE" -eq 1 ]; }; } && COV_WHY="${COV_WHY:+$COV_WHY; }no iOS or Android project found"
-echo "Coverage. $([ -n "$COV_WHY" ] && echo incomplete || echo complete) ios=$ANY_IOS android=$ANY_AND web=$ANY_WEB${COV_WHY:+ reason=$COV_WHY}"
+echo "Coverage. $([ -n "$COV_WHY" ] && echo incomplete || echo complete) ios=$ANY_IOS android=$ANY_AND web=$ANY_WEB$([ "$ANY_MAC" -eq 1 ] && echo " macos=1")${COV_WHY:+ reason=$COV_WHY}"
 # Issue #658. A run killed by the hook timeout looks like a silent pass, so say how long this one took.
 SLOW_SECS="${APP_STORE_GUARD_SLOW_SECS:-45}"
 case "$SLOW_SECS" in ''|*[!0-9]*) SLOW_SECS=45 ;; esac

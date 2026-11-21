@@ -85,7 +85,7 @@ struct DeliveryScope: Codable, Equatable {
             && (1...3).contains(version.split(separator: ".", omittingEmptySubsequences: false).count)
             && !build.isEmpty && build.split(separator: ".", omittingEmptySubsequences: false).allSatisfy(Self.number)
             && !regionCodes.isEmpty && regionCodes.allSatisfy(regionIDs.contains)
-            && locale.range(of: "^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$", options: .regularExpression) != nil
+            && StoreLocales.canonical(locale) != nil
     }
 
     private static func number(_ value: Substring) -> Bool {
@@ -168,6 +168,7 @@ struct DeliveryProject: Codable, Equatable, Identifiable {
     var checks: [DeliveryCheck: Verification] = [:]
     var listing = ListingDraft()
     var listingReport: ListingReport?
+    var sourceReport: SourceReport?
     var localeDrafts: [String: ListingDraft] = [:]
     var localeReports: [String: ListingReport] = [:]
     var reviewNotes = ""
@@ -195,8 +196,12 @@ struct DeliveryProject: Codable, Equatable, Identifiable {
         }
     }
     var listingBlocked: Bool {
-        guard let listingReport, !listingReport.blocked else { return true }
-        return localeDrafts.keys.contains { localeReports[$0]?.blocked != false }
+        guard let listingReport, !listingReport.blocked,
+              !phase.editable || listingReport.current(for: listing) else { return true }
+        return localeDrafts.contains { locale, draft in
+            guard let report = localeReports[locale], !report.blocked else { return true }
+            return phase.editable && !report.current(for: draft)
+        }
     }
 
     var activeStep: DeliveryStep {
@@ -214,11 +219,19 @@ struct DeliveryProject: Codable, Equatable, Identifiable {
     }
 
     var openChecks: [DeliveryCheck] {
-        DeliveryCheck.allCases.filter { checks[$0] == nil && ![.account, .distribution, .storefront].contains($0) }
+        DeliveryCheck.allCases.filter {
+            ![.account, .distribution, .storefront].contains($0)
+                && (checks[$0] == nil || ($0 == .source && phase.editable && !sourceReady))
+        }
+    }
+
+    var sourceReady: Bool {
+        guard let sourceReport else { return false }
+        return sourceReport.complete && !sourceReport.blocked && sourceReport.engineFingerprint == DeliveryAudit.sourceEngineFingerprint
     }
 
     var rulesReady: Bool {
-        guard rulesCurrent, let rules else { return false }
+        guard rulesCheckedAt != nil, !phase.editable || rulesCurrent, let rules else { return false }
         return rules.allSatisfy { !$0.blocksRelease || ruleProof[$0.id] != nil }
     }
 
@@ -229,7 +242,7 @@ struct DeliveryProject: Codable, Equatable, Identifiable {
 
     func completed(_ step: DeliveryStep) -> Bool {
         switch step {
-        case .scope: scopeConfirmed
+        case .scope: scopeConfirmed && scope.isValid
         case .account: checks[.account] != nil && !storeAppID.isEmpty
         case .checks: openChecks.isEmpty && rulesReady
         case .listing: !listingBlocked && checks[.storefront] != nil && !reviewNotes.isBlank
@@ -243,8 +256,10 @@ struct DeliveryProject: Codable, Equatable, Identifiable {
         [.scope, .account, .checks, .listing, .archive].filter { !completed($0) }
     }
 
-    mutating func setScope(_ value: DeliveryScope) {
-        guard phase.editable, value.isValid else { return }
+    mutating func setScope(_ input: DeliveryScope) {
+        var value = input
+        guard phase.editable, value.isValid, let locale = StoreLocales.canonical(value.locale) else { return }
+        value.locale = locale
         if scopeConfirmed, scope != value {
             let buildChanged = scope.version != value.version || scope.build != value.build
             let applicabilityChanged = scope.regionCodes != value.regionCodes || scope.featureCodes != value.featureCodes || scope.login != value.login || scope.purchases != value.purchases
@@ -268,8 +283,9 @@ struct DeliveryProject: Codable, Equatable, Identifiable {
     func draft(for locale: String) -> ListingDraft { locale == scope.locale ? listing : localeDrafts[locale] ?? ListingDraft() }
     func report(for locale: String) -> ListingReport? { locale == scope.locale ? listingReport : localeReports[locale] }
 
-    mutating func setListing(_ new: ListingDraft, locale: String) {
+    mutating func setListing(_ new: ListingDraft, locale input: String) {
         guard phase.editable else { return }
+        guard let locale = StoreLocales.canonical(input) else { return }
         if locale == scope.locale {
             guard new != listing else { return }
             listing = new; listingReport = nil
@@ -281,7 +297,7 @@ struct DeliveryProject: Codable, Equatable, Identifiable {
     }
 
     mutating func recordReport(_ report: ListingReport, for draft: ListingDraft, locale: String) {
-        guard phase.editable, draft == self.draft(for: locale) else { return }
+        guard phase.editable, draft == self.draft(for: locale), report.current(for: draft) else { return }
         if locale == scope.locale { listingReport = report }
         else { localeReports[locale] = report }
         if report.blocked { checks[.storefront] = nil }
@@ -294,6 +310,36 @@ struct DeliveryProject: Codable, Equatable, Identifiable {
         checks[.storefront] = nil
     }
 
+    mutating func removeLocale(_ locale: String) {
+        guard phase.editable, locale != scope.locale else { return }
+        localeDrafts[locale] = nil
+        localeReports[locale] = nil
+        checks[.storefront] = nil
+    }
+
+    mutating func setBasicInfo(name: String, folder: String, bundleID: String) {
+        guard phase.editable, !name.isBlank, !folder.isBlank,
+              bundleID.range(of: "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$", options: .regularExpression) != nil else { return }
+        if self.folder != folder || self.bundleID != bundleID {
+            invalidateBuild()
+            sourceReport = nil
+            if self.bundleID != bundleID {
+                storeAppID = ""
+                checks[.account] = nil
+                accountWait = ""
+            }
+        }
+        self.name = name; self.folder = folder; self.bundleID = bundleID
+    }
+
+    mutating func recordSource(_ report: SourceReport) {
+        guard phase.editable else { return }
+        if sourceReport?.fingerprint != report.fingerprint || sourceReport?.engineFingerprint != report.engineFingerprint || report.blocked || !report.complete {
+            checks[.source] = nil
+        }
+        sourceReport = report
+    }
+
     mutating func setNotes(_ value: String) {
         guard phase.editable, reviewNotes != value else { return }
         reviewNotes = value
@@ -304,6 +350,7 @@ struct DeliveryProject: Codable, Equatable, Identifiable {
         guard phase.editable, !note.isBlank else { return }
         if [.runtime, .distribution, .privacy, .reviewAccess, .purchases].contains(key), !hasMatchingArchive,
            !notApplicable { return }
+        if key == .source && !sourceReady { return }
         if key == .storefront && (listingBlocked || reviewNotes.isBlank) { return }
         if key == .account && !Self.validStoreID(storeAppID) { return }
         if notApplicable {

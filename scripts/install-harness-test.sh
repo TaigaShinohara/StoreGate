@@ -595,5 +595,13 @@ OUT="$(run --tool gemini --dry-run)"; RC=$?
 [ "$RC" -eq 0 ] && [ ! -e "$H/.gemini" ] && [ ! -e "$H/.agents" ] && ok "--dry-run writes nothing" || bad "--dry-run writes nothing (rc=$RC)"
 
 echo ""
+# The ownership registry must recognize the exact installed guard through a HOME symlink.
+fresh
+mkdir -p "$WORK/alias-parent"
+ln -s "$H" "$WORK/alias-parent/home"
+H="$WORK/alias-parent/home"
+OUT="$(run --tool codex)"; RC=$?
+[ "$RC" -eq 0 ] && echo "$OUT" | grep -q "Install verified." && ok "helper ownership follows the same guard through a HOME symlink" || bad "helper ownership follows the same guard through a HOME symlink (rc=$RC)"
+
 echo "install-harness-test: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
