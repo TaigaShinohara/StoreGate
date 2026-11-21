@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 struct WorkspaceShell: View {
@@ -7,6 +8,7 @@ struct WorkspaceShell: View {
     var openSample: () -> Void
 
     @State private var showingNewProject = false
+    @State private var editingProject: DeliveryProject?
     @State private var confirmingRestore = false
     @AccessibilityFocusState private var accessibilityFocus: FocusTarget?
 
@@ -26,6 +28,8 @@ struct WorkspaceShell: View {
                         Button("配信案件の一覧に戻る", systemImage: "chevron.left") { store.select(nil) }
                             .buttonStyle(.borderless)
                         Spacer()
+                        Button("案件の基本情報を編集…", systemImage: "pencil") { editingProject = project }
+                            .disabled(!project.phase.editable || store.saveProblem != nil)
                     }
                     .padding(.horizontal, 22)
                     .padding(.vertical, 10)
@@ -43,7 +47,10 @@ struct WorkspaceShell: View {
             }
         }
         .sheet(isPresented: $showingNewProject, onDismiss: focusProjectList) {
-            NewDeliveryProject(store: store)
+            DeliveryProjectEditor(store: store)
+        }
+        .sheet(item: $editingProject) { project in
+            DeliveryProjectEditor(store: store, editing: project)
         }
         .alert("バックアップから復元しますか？", isPresented: $confirmingRestore) {
             Button("キャンセル", role: .cancel) {}
@@ -244,13 +251,23 @@ struct WorkspaceShell: View {
 }
 
 @MainActor
-private struct NewDeliveryProject: View {
+private struct DeliveryProjectEditor: View {
     @ObservedObject var store: DeliveryStore
     @Environment(\.dismiss) private var dismiss
 
-    @State private var name = ""
-    @State private var folder: URL?
-    @State private var bundleID = ""
+    let editing: DeliveryProject?
+    @State private var name: String
+    @State private var folderPath: String
+    @State private var bundleID: String
+    @State private var choosingFolder = false
+
+    init(store: DeliveryStore, editing: DeliveryProject? = nil) {
+        self.store = store
+        self.editing = editing
+        _name = State(initialValue: editing?.name ?? "")
+        _folderPath = State(initialValue: editing?.folder ?? "")
+        _bundleID = State(initialValue: editing?.bundleID ?? "")
+    }
     @State private var problem: String?
     @State private var projectIDsBeforeCreation: Set<UUID>?
     @FocusState private var field: Field?
@@ -262,7 +279,7 @@ private struct NewDeliveryProject: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("配信案件を作成")
+            Text(editing == nil ? "配信案件を作成" : "案件の基本情報を編集")
                 .font(.title2.weight(.semibold))
                 .accessibilityAddTraits(.isHeader)
 
@@ -276,17 +293,19 @@ private struct NewDeliveryProject: View {
                 }
                 GridRow {
                     Text("フォルダ").fontWeight(.medium)
-                    HStack {
-                        Button("フォルダを選ぶ…", systemImage: "folder", action: chooseFolder)
-                            .accessibilityHint("配信するアプリのプロジェクトフォルダを選択する")
+                    VStack(alignment: .leading, spacing: 6) {
+                        TextField("プロジェクトフォルダのパス", text: $folderPath)
+                            .accessibilityLabel("プロジェクトフォルダのパス")
                             .focused($field, equals: .folder)
-                        if let folder {
-                            Text(folder.path(percentEncoded: false))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .help(folder.path(percentEncoded: false))
-                                .accessibilityLabel("選択したフォルダ \(folder.path(percentEncoded: false))")
-                        }
+                            .autocorrectionDisabled()
+                        Button("フォルダを選ぶ…", systemImage: "folder") { choosingFolder = true }
+                        Text("Finderからフォルダをドラッグするか、コピーしたパスを貼り付けられます。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .dropDestination(for: URL.self) { urls, _ in
+                        guard urls.count == 1, urls[0].isFileURL else { return false }
+                        folderPath = urls[0].path(percentEncoded: false)
+                        return true
                     }
                 }
                 GridRow(alignment: .top) {
@@ -306,6 +325,10 @@ private struct NewDeliveryProject: View {
             }
             .disabled(creating || store.saveProblem != nil)
 
+            if editing != nil {
+                Text("場所やBundle IDを変えると、アーカイブと関連する確認が再確認になります。Bundle IDの変更時はストアのアプリIDも記録し直します。")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
             if let message = store.saveProblem ?? problem {
                 Label(message, systemImage: "exclamationmark.triangle")
                     .fixedSize(horizontal: false, vertical: true)
@@ -325,11 +348,14 @@ private struct NewDeliveryProject: View {
                     .keyboardShortcut(.cancelAction)
                     .disabled(creating)
                 if store.saveProblem != nil {
-                    Button("保存を再試行") { store.retrySave() }
+                    Button("保存を再試行") {
+                        store.retrySave()
+                        if editing != nil && store.saveProblem == nil { dismiss() }
+                    }
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
                 } else {
-                    Button("案件を作成") { createProject() }
+                    Button(editing == nil ? "案件を作成" : "変更を保存") { createProject() }
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
                         .disabled(creating)
@@ -339,34 +365,37 @@ private struct NewDeliveryProject: View {
         .padding(24)
         .frame(width: 560)
         .defaultFocus($field, .name)
+        .fileImporter(isPresented: $choosingFolder, allowedContentTypes: [.folder]) { result in
+            switch result {
+            case .success(let url): folderPath = url.path(percentEncoded: false); problem = nil; field = .bundleID
+            case .failure: problem = "フォルダを選べませんでした。パスの貼り付けかドラッグも使えます。"
+            }
+        }
         .onChange(of: store.saveProblem) { _, message in
             if message != nil { problemFocused = true }
         }
         .onChange(of: store.workspace.projects.map(\.id)) { _, _ in openNewProjectIfSaved() }
     }
 
-    private func chooseFolder() {
-        let picker = NSOpenPanel()
-        picker.title = "プロジェクトのフォルダを選ぶ"
-        picker.prompt = "このフォルダを選ぶ"
-        picker.canChooseDirectories = true
-        picker.canChooseFiles = false
-        picker.canCreateDirectories = false
-        picker.begin { result in
-            guard result == .OK, let url = picker.url else { return }
-            folder = url
-            problem = nil
-            field = .bundleID
-        }
-    }
-
     private func createProject() {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let bundleID = bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return showProblem("アプリ名を入力してください。", at: .name) }
-        guard let folder else { return showProblem("プロジェクトのフォルダを選んでください。", at: .folder) }
+        let folder: URL
+        do { folder = try ProjectLocation.url(folderPath) }
+        catch { return showProblem(error.localizedDescription, at: .folder) }
         guard !bundleID.isEmpty else { return showProblem("Bundle IDを入力してください。", at: .bundleID) }
         problem = nil
+        if let editing {
+            let changed = store.update(editing.id) { $0.setBasicInfo(name: name, folder: folder.path(percentEncoded: false), bundleID: bundleID) }
+            if changed && store.saveProblem == nil { dismiss() }
+            else if store.saveProblem == nil {
+                if store.current(editing.id)?.name == name && store.current(editing.id)?.folder == folder.path(percentEncoded: false)
+                    && store.current(editing.id)?.bundleID == bundleID { dismiss() }
+                else { showProblem("Bundle IDと入力内容を確認してください。", at: .bundleID) }
+            }
+            return
+        }
         projectIDsBeforeCreation = Set(store.workspace.projects.map(\.id))
         if !store.add(name: name, folder: folder.path(percentEncoded: false), bundleID: bundleID) {
             projectIDsBeforeCreation = nil

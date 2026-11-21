@@ -26,6 +26,7 @@ REQUIRED_PAYLOAD = (
     "scripts/deadline-checker.py",
     "scripts/validate-privacy-manifest.py",
     "scripts/android-target-sdk.py",
+    "scripts/macos-source-audit.py",
     ".citation-allowlist",
 )
 SUBMIT = "fast" + "lane deliver"

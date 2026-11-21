@@ -36,6 +36,9 @@ jobs:
           bash scripts/check-docs-test.sh
           python3 scripts/check-docs.py
 
+      - name: macOS source audit and Japanese guidance catalog
+        run: python3 scripts/test-macos-source-audit.py
+
       - name: Metadata audit test suite
         run: bash scripts/metadata-audit-test.sh
 

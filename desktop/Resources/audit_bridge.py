@@ -100,7 +100,14 @@ def applicable_rules(payload):
     ]
 
 
-COMMANDS = {"listing": check_listing, "rules": applicable_rules}
+def check_source(payload):
+    if payload.keys() != {"folder"} or not isinstance(payload["folder"], str):
+        raise BridgeError("INVALID_INPUT")
+    scanner = bundled_module("storegate_macos", "macos-source-audit.py")
+    return scanner.audit(payload["folder"])
+
+
+COMMANDS = {"listing": check_listing, "rules": applicable_rules, "source": check_source}
 
 
 def main():

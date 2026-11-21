@@ -44,6 +44,14 @@ has() { grep -q -- "$1" "$T/out.txt"; }
 # Verdicts and exit codes.
 app clean 0 "$CLEAN"; fleet clean
 [ "$(run)" = 0 ] && has "Fleet verdict. READY" && ok || bad "clean app is READY, exit 0"
+app mac 0 'Summary. critical=0 high=0 medium=0\nCoverage. complete ios=0 android=0 web=0 macos=1\nCLEAR.\n'
+fleet mac:macos
+[ "$(run)" = 0 ] && has "Fleet verdict. READY" && ok || bad "explicit macOS coverage is accepted"
+fleet mac:ios
+[ "$(run)" = 1 ] && has "ios" && ok || bad "macOS coverage cannot satisfy an iOS scope"
+app mixedmac 0 'Summary. critical=0 high=0 medium=0\nCoverage. incomplete ios=1 android=0 web=0 macos=1 reason=mixed target scope\n'
+fleet mixedmac:macos
+[ "$(run)" = 1 ] && has "scan was incomplete" && ok || bad "mixed Mac scope remains NOT_CHECKED"
 app blocked 2 "$CRIT"; fleet clean blocked
 [ "$(run)" = 2 ] && has "Fleet verdict. BLOCKED" && ok || bad "one blocked app blocks the fleet, exit 2"
 app highonly 0 "$HIGHONLY"; fleet highonly

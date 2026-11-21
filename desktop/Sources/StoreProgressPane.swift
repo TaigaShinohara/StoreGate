@@ -125,6 +125,7 @@ struct StoreProgressPane: View {
         Task {
             defer { verifyingArchive = false }
             do {
+                _ = try await DeliveryAudit.verifySource(store.current(project.id) ?? project)
                 let latest = try await ArchiveInspection.inspect(URL(fileURLWithPath: evidence.path))
                 guard latest.sameSignedArtifact(as: evidence),
                       store.current(project.id)?.archive?.sameSignedArtifact(as: evidence) == true else {
@@ -133,7 +134,7 @@ struct StoreProgressPane: View {
                 }
                 verifiedFingerprint = latest.fingerprint
             } catch {
-                archiveIssue = "保存したアーカイブを確認できません。配布用ビルドを選び直してください。"
+                archiveIssue = error.localizedDescription
             }
         }
     }
@@ -319,6 +320,8 @@ private struct ObservationSheet: View {
         issue = nil
         Task {
             defer { checking = false }
+            do { _ = try await DeliveryAudit.verifySource(store.current(project.id) ?? project) }
+            catch { issue = error.localizedDescription; return }
             guard let latest = try? await ArchiveInspection.inspect(URL(fileURLWithPath: saved.path)),
                   latest.sameSignedArtifact(as: saved),
                   store.current(project.id)?.archive?.sameSignedArtifact(as: saved) == true else {

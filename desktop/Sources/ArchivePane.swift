@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ArchivePane: View {
     let project: DeliveryProject
@@ -8,6 +9,8 @@ struct ArchivePane: View {
     @State private var error: String?
     @State private var differences: [String] = []
     @State private var newBuild = ""
+    @State private var archivePath = ""
+    @State private var choosingArchive = false
 
     var body: some View {
         if !project.scopeConfirmed {
@@ -31,12 +34,32 @@ struct ArchivePane: View {
                     WorkNotice(text: "このビルド番号で、内容の異なるアーカイブをアップロード済みとして記録しています。Xcodeでビルド番号を上げて作り直し、下の「別のビルド番号に差し替える」から更新してください。")
                 }
                 if project.phase.editable {
+                    TextField(".xcarchive のパス", text: $archivePath)
+                        .accessibilityLabel("アーカイブのパス")
+                        .autocorrectionDisabled()
+                        .onSubmit { inspectPath() }
+                    Button("このパスを照合") { inspectPath() }
+                        .disabled(inspecting || archivePath.isBlank)
+                    Text("Finderからアーカイブをドラッグするか、パスを貼り付けられます。")
+                        .font(.caption).foregroundStyle(.secondary)
                     Button(project.archive == nil && differences.isEmpty && error == nil ? "アーカイブを選ぶ…" : "アーカイブを選び直す…") {
-                        choose()
+                        choosingArchive = true
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(inspecting)
                 }
+            }
+            .fileImporter(isPresented: $choosingArchive, allowedContentTypes: [.item]) { result in
+                switch result {
+                case .success(let url): archivePath = url.path(percentEncoded: false); inspectPath()
+                case .failure: error = "アーカイブを選べませんでした。パスの貼り付けかドラッグも使えます。"
+                }
+            }
+            .dropDestination(for: URL.self) { urls, _ in
+                guard project.phase.editable, urls.count == 1, urls[0].isFileURL, !inspecting else { return false }
+                archivePath = urls[0].path(percentEncoded: false)
+                inspectPath()
+                return true
             }
 
             if let result = project.archive {
@@ -78,16 +101,10 @@ struct ArchivePane: View {
         return newBuild != project.scope.build && value.isValid
     }
 
-    private func choose() {
-        let picker = NSOpenPanel()
-        picker.title = "配布用アーカイブを選ぶ"
-        picker.message = "Xcodeで作成した .xcarchive を選びます。"
-        picker.canChooseDirectories = true
-        picker.canChooseFiles = true
-        picker.treatsFilePackagesAsDirectories = false
-        picker.begin { result in
-            if result == .OK, let url = picker.url { inspect(url) }
-        }
+    private func inspectPath() {
+        guard !inspecting else { return }
+        do { inspect(try ProjectLocation.url(archivePath)) }
+        catch { self.error = error.localizedDescription }
     }
 
     private func inspect(_ url: URL) {
