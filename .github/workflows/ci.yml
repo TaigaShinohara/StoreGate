@@ -51,6 +51,9 @@ jobs:
       - name: Release audit test
         run: bash scripts/release-audit-test.sh
 
+      - name: Shared delivery workflow
+        run: python3 -m unittest discover -s delivery
+
       - name: Fleet Sweep test
         run: bash scripts/fleet-sweep-test.sh
 

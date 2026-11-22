@@ -47,11 +47,14 @@ case "${1:-}" in
     swift_build "$here/Sources/"*.swift -o "$build/StoreGate"
     mkdir -p "$bundle/Contents/MacOS"
     resources="$bundle/Contents/Resources/StoreGateTools"
-    mkdir -p "$resources/scripts" "$resources/data"
+    mkdir -p "$resources/scripts" "$resources/data" "$resources/delivery" "$resources/agent-os/hooks"
     build_icon
     cp "$here/Resources/audit_bridge.py" "$resources/"
+    cp "$repo/delivery/"{storegate,assets,builds,stores,apple_assets}.py "$resources/delivery/"
+    cp "$repo/agent-os/hooks/storegate-guard.sh" "$resources/agent-os/hooks/"
     cp "$repo/scripts/metadata-audit.py" "$repo/scripts/ruling-register.py" \
-      "$repo/scripts/macos-source-audit.py" "$repo/scripts/validate-privacy-manifest.py" "$resources/scripts/"
+      "$repo/scripts/macos-source-audit.py" "$repo/scripts/validate-privacy-manifest.py" \
+      "$repo/scripts/android-target-sdk.py" "$resources/scripts/"
     xcrun xcstringstool compile "$here/Resources/Audit.xcstrings" --output-directory "$bundle/Contents/Resources"
     cp "$repo/data/rejection-patterns.json" "$repo/data/ruling-register.json" "$resources/data/"
     cp "$repo/LICENSE" "$repo/NOTICE" "$resources/"
