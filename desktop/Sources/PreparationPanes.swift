@@ -162,6 +162,7 @@ struct ListingPane: View {
     @State private var issue: String?
     @FocusState private var fieldFocus: String?
     @State private var section = 0
+    @State private var storefrontDraft = CheckEntryDraft()
 
     private var availableLocales: [String] {
         [project.scope.locale] + project.localeDrafts.keys.filter { $0 != project.scope.locale }.sorted()
@@ -204,7 +205,7 @@ struct ListingPane: View {
                     notesCard
                 } else {
                     CheckCard(key: .storefront, project: project, store: store,
-                              action: ("App Store Connectを開く", ReleaseLinks.connect))
+                              action: ("App Store Connectを開く", ReleaseLinks.connect), draft: $storefrontDraft)
                 }
             }
         }
