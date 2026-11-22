@@ -3,20 +3,20 @@ import SwiftUI
 struct MacSourcePane: View {
     let project: DeliveryProject
     let store: DeliveryStore
-    @State private var running = false
+    @Binding var running: Bool
     @State private var issue: String?
 
     var body: some View {
         WorkCard(title: "Macソース監査") {
-            Text(project.folder).textSelection(.enabled)
-            Text("SDK設定、権限の用途説明、HTTP接続先、ポリシー参照、Privacy Manifestを静的に検査します。ビルドスクリプトは実行しません。署名資格・実機・ストア申告は別途確認します。")
-                .foregroundStyle(.secondary)
+            WorkDetails(title: "検査対象と範囲") {
+                Text(project.folder).textSelection(.enabled)
+                Text("SDK設定、用途説明、HTTP接続先、ポリシー参照、Privacy Manifestの静的監査です。署名資格・実機・ストア申告は「手動確認」で確認します。")
+                    .foregroundStyle(.secondary)
+            }
             if let report = project.sourceReport {
-                Text("検査日時 \(report.checkedAt.formatted(date: .abbreviated, time: .shortened)) · \(report.fileCount)ファイル")
-                    .font(.caption)
                 WorkNotice(text: !report.complete ? "監査を完了できませんでした。下の理由を確認してください。"
                            : report.blocked ? "提出前に直す指摘があります。修正後に再監査してください。"
-                           : "検査した範囲に重大な指摘はありません。下の手動確認も記録してください。",
+                           : "静的監査に重大な指摘はありません。手動確認へ進めます。",
                            symbol: report.complete && !report.blocked ? "checkmark.circle" : "exclamationmark.triangle",
                            shade: report.complete && !report.blocked ? .green : .orange)
                 if project.phase.editable && report.engineFingerprint != DeliveryAudit.sourceEngineFingerprint {
@@ -27,10 +27,14 @@ struct MacSourcePane: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(finding.severity == "critical" ? "重大" : finding.severity == "high" ? "高" : "要確認").bold()
                         FindingGuidance(finding: finding)
-                        if let location = finding.location { Text(location).font(.caption).textSelection(.enabled) }
-                        Text(finding.rule).font(.caption).foregroundStyle(.secondary)
+                        WorkDetails(title: "検出箇所とルール") {
+                            if let location = finding.location { Text(location).textSelection(.enabled) }
+                            Text(finding.rule).foregroundStyle(.secondary)
+                        }
                     }.padding(.vertical, 5)
                 }
+                Text("\(report.checkedAt.formatted(date: .abbreviated, time: .shortened)) · \(report.fileCount)ファイル")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             if let issue { WorkNotice(text: issue) }
             if project.phase.editable {

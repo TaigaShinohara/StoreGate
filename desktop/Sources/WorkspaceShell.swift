@@ -25,10 +25,12 @@ struct WorkspaceShell: View {
             } else if let project = selectedProject {
                 VStack(spacing: 0) {
                     HStack {
-                        Button("配信案件の一覧に戻る", systemImage: "chevron.left") { store.select(nil) }
+                        Button("案件一覧", systemImage: "chevron.left") { store.select(nil) }
                             .buttonStyle(.borderless)
+                            .accessibilityLabel("配信案件の一覧に戻る")
                         Spacer()
-                        Button("案件の基本情報を編集…", systemImage: "pencil") { editingProject = project }
+                        Button("基本情報…", systemImage: "pencil") { editingProject = project }
+                            .accessibilityLabel("案件の基本情報を編集")
                             .disabled(!project.phase.editable || store.saveProblem != nil)
                     }
                     .padding(.horizontal, 22)
@@ -118,8 +120,7 @@ struct WorkspaceShell: View {
 
             if store.workspace.projects.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("配信するアプリを登録する").font(.headline)
-                    Text("アプリ名、プロジェクトのフォルダ、Bundle IDを用意します。登録後は、Mac App Storeへの配信に必要な作業を順に確認できます。")
+                    Text("Mac App Storeへ配信するアプリを登録します。")
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -142,11 +143,6 @@ struct WorkspaceShell: View {
 
             sampleEntry
 
-            if let savedAt = store.workspace.savedAt {
-                Text("最後の保存 \(savedAt.formatted(date: .abbreviated, time: .shortened))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
     }
 
@@ -189,13 +185,9 @@ struct WorkspaceShell: View {
     }
 
     private var sampleEntry: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button("サンプルを開く", systemImage: "play.rectangle", action: openSample)
-                .buttonStyle(.link)
-            Text("架空の案件で配信手順を試せます。")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-        }
+        Button("サンプルで試す", systemImage: "play.rectangle", action: openSample)
+            .buttonStyle(.link)
+            .help("架空の案件で配信手順を試せます。")
     }
 
     private func loadRecovery(_ problem: String) -> some View {
@@ -299,8 +291,7 @@ private struct DeliveryProjectEditor: View {
                             .focused($field, equals: .folder)
                             .autocorrectionDisabled()
                         Button("フォルダを選ぶ…", systemImage: "folder") { choosingFolder = true }
-                        Text("Finderからフォルダをドラッグするか、コピーしたパスを貼り付けられます。")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .help("Finderからドラッグするか、パスを貼り付けられます。")
                     }
                     .dropDestination(for: URL.self) { urls, _ in
                         guard urls.count == 1, urls[0].isFileURL else { return false }
@@ -316,10 +307,7 @@ private struct DeliveryProjectEditor: View {
                             .accessibilityLabel("Bundle ID")
                             .focused($field, equals: .bundleID)
                             .autocorrectionDisabled()
-                        Text("Xcodeの対象アプリのターゲットに表示される Bundle Identifier を入力します。")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .help("Xcodeの対象アプリにある Bundle Identifier を入力します。")
                     }
                 }
             }

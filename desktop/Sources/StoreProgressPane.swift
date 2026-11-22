@@ -19,11 +19,6 @@ struct StoreProgressPane: View {
     var body: some View {
         WorkCard(title: project.phase.title) {
             LabeledContent("対象", value: "\(project.bundleID) · \(project.scope.version) · ビルド \(project.scope.build)")
-            if let event = project.records.last {
-                Text("最後に記録したストア状態 · \(event.date.formatted(date: .abbreviated, time: .shortened))")
-                    .font(.caption).foregroundStyle(.secondary)
-                Text(event.note).textSelection(.enabled)
-            }
             if project.observedBeforeReadiness && !project.uploadBlockers.isEmpty {
                 WorkNotice(text: "ストアで実際に見た状態を記録しています。StoreGate側には未確認の項目が残っています。", symbol: "info.circle", shade: .accentColor)
             }
@@ -101,7 +96,8 @@ struct StoreProgressPane: View {
 
     @ViewBuilder private var handoffActions: some View {
         if !project.uploadBlockers.isEmpty {
-            WorkNotice(text: "まだ必要な確認が残っています。下の項目を開いて結果を記録してください。")
+            Text("下の未確認項目を済ませると、アップロードへ進めます。")
+                .foregroundStyle(.secondary)
         } else {
             Text("送付や選択を案内する前に、保存したアーカイブが未変更か照合します。")
                 .foregroundStyle(.secondary)
@@ -142,26 +138,34 @@ struct StoreProgressPane: View {
     @ViewBuilder private var reviewActions: some View {
         switch project.phase {
         case .upload, .revision:
-            Text("残っている確認を済ませたら、Xcode OrganizerからMac App Store用の対象ビルドをアップロードしてください。既に同じビルドを送り終えている場合は、処理済みで選べることを確認します。")
+            Text("Xcode Organizerから対象ビルドをアップロードします。")
             Link("Appleのアップロード手順", destination: ReleaseLinks.upload)
             observationButton("アップロードしたことを記録", target: .processing, needsReadiness: true)
-            observationButton("処理済みで選べるビルドを記録", target: .submission, needsReadiness: true, prominent: false)
+            WorkDetails(title: "すでにアップロード済みの場合") {
+                observationButton("処理済みで選べるビルドを記録", target: .submission, needsReadiness: true, prominent: false)
+            }
         case .processing:
-            Text("App Store Connectに対象のビルド番号が現れ、当該バージョンで選べるまで待ちます。待っている間はアプリを閉じても再開できます。")
+            Text("App Store Connectで対象ビルドが選べるまで待ちます。")
             Link("App Store Connectでビルドを確認", destination: ReleaseLinks.connect)
             observationButton("処理済みで選べるビルドを記録", target: .submission, needsReadiness: true)
             Button("アップロードの問題を記録…") { showRevision = true }
         case .submission:
-            Text("App Store Connectで対象Mac版を開き、正しいビルドを選択します。「審査に追加」は下書きです。「審査に提出」を実行し、審査待ちになったことを確認してください。")
+            Text("対象Mac版とビルドを選び、「審査に提出」を実行します。「審査に追加」は下書きです。")
             Link("App Store Connectを開く", destination: ReleaseLinks.connect)
-            Link("Appleの提出手順", destination: ReleaseLinks.review)
+            WorkDetails(title: "Appleの提出手順") {
+                Link("提出手順を開く", destination: ReleaseLinks.review)
+            }
             observationButton("審査待ちになったことを記録", target: .reviewQueue, needsReadiness: true)
-            observationButton("すでに審査中の状態を記録", target: .inReview, needsReadiness: true, prominent: false)
+            WorkDetails(title: "すでに審査が始まっている場合") {
+                observationButton("審査中を記録", target: .inReview, needsReadiness: true, prominent: false)
+            }
             Button("ビルド・掲載情報の問題を記録…") { showRevision = true }
         case .reviewQueue, .inReview:
-            Text("App Store Connectの「App審査」で対象バージョンを確認します。進展がなければ今は待機です。この状態から再開できます。")
+            Text("App Store Connectの「App審査」で、対象バージョンの状態を確認します。")
             Link("App Store Connectで状況を確認", destination: ReleaseLinks.connect)
-            Link("審査状態の見方", destination: ReleaseLinks.status)
+            WorkDetails(title: "Appleの審査状態の説明") {
+                Link("状態の説明を開く", destination: ReleaseLinks.status)
+            }
             if project.phase == .reviewQueue {
                 observationButton("審査が始まったことを記録", target: .inReview, prominent: false)
             }
@@ -272,7 +276,7 @@ private struct ObservationSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(action.label).font(.title2).accessibilityAddTraits(.isHeader)
-            Text("見た画面で対象アプリと版を照合し、確認した状態を記録します。予定は Apple ID \(project.storeAppID) / 版 \(project.scope.version) / ビルド \(project.scope.build) です。")
+            Text("照合先：Apple ID \(project.storeAppID) · 版 \(project.scope.version) · ビルド \(project.scope.build)")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Group {
