@@ -214,11 +214,9 @@ private struct ReleaseWindow: View {
             }
 
             VStack(alignment: .leading, spacing: 7) {
-                Text("配信の進捗").font(.subheadline.weight(.medium))
                 ProgressView(value: Double(store.progress.completed.count), total: Double(ReleaseStep.allCases.count))
-                Text("\(store.progress.completed.count) / \(ReleaseStep.allCases.count) 完了")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("配信の進捗")
+                    .accessibilityValue("\(store.progress.completed.count) / \(ReleaseStep.allCases.count) 完了")
             }
             .accessibilityElement(children: .combine)
 
@@ -262,10 +260,10 @@ private struct ReleaseWindow: View {
     private func stepContent(_ step: ReleaseStep) -> some View {
         VStack(alignment: .leading, spacing: 22) {
             header(step.instruction, subtitle: step == .archive
-                ? "XcodeのOrganizerで作った .xcarchive と、この案件の識別情報を照合します。"
-                : "以下はサンプル案件です。実際の提出や公開を行わずに流れを試せます。")
+                ? "Xcodeの .xcarchive とサンプルの識別情報を照合します。"
+                : "")
 
-            if step == .scope || step == .archive || step == .review || step == .publication {
+            if step == .scope || step == .archive {
                 facts
             }
 
@@ -309,16 +307,15 @@ private struct ReleaseWindow: View {
 
     private func header(_ title: String, subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("サンプル案件 · 日本向け")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
             Text(title)
-                .font(.system(size: 28, weight: .semibold))
+                .font(.largeTitle.weight(.semibold))
                 .accessibilityAddTraits(.isHeader)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(subtitle)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if !subtitle.isEmpty {
+                Text(subtitle)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 

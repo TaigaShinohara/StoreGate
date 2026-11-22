@@ -16,14 +16,9 @@ struct ArchivePane: View {
         if !project.scopeConfirmed {
             WorkNotice(text: "先に配信設定で今回のバージョンとビルド番号を保存してください。")
         } else {
-            WorkCard(title: "Xcodeで作成したアーカイブを照合する") {
+            WorkCard(title: "アーカイブの照合") {
                 LabeledContent("予定のBundle ID", value: project.bundleID)
                 LabeledContent("予定の版", value: "\(project.scope.version) · ビルド \(project.scope.build)")
-                Text("Xcodeの Product > Archive で配布用アーカイブを作成し、Organizerで対象を選びます。「Show in Finder」で .xcarchive の場所を開けます。")
-                    .foregroundStyle(.secondary)
-                if let xcode = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.dt.Xcode") {
-                    Link("Xcodeを開く", destination: xcode)
-                }
                 if inspecting { ProgressView("識別情報・署名・Sandboxを確認中…") }
                 if let error { WorkNotice(text: error) }
                 if !differences.isEmpty {
@@ -34,19 +29,28 @@ struct ArchivePane: View {
                     WorkNotice(text: "このビルド番号で、内容の異なるアーカイブをアップロード済みとして記録しています。Xcodeでビルド番号を上げて作り直し、下の「別のビルド番号に差し替える」から更新してください。")
                 }
                 if project.phase.editable {
-                    TextField(".xcarchive のパス", text: $archivePath)
-                        .accessibilityLabel("アーカイブのパス")
-                        .autocorrectionDisabled()
-                        .onSubmit { inspectPath() }
-                    Button("このパスを照合") { inspectPath() }
-                        .disabled(inspecting || archivePath.isBlank)
-                    Text("Finderからアーカイブをドラッグするか、パスを貼り付けられます。")
-                        .font(.caption).foregroundStyle(.secondary)
                     Button(project.archive == nil && differences.isEmpty && error == nil ? "アーカイブを選ぶ…" : "アーカイブを選び直す…") {
                         choosingArchive = true
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(inspecting)
+                    .help("Finderからこのカードへドラッグしても照合できます。")
+                    WorkDetails(title: "パスを貼り付けて照合") {
+                        HStack {
+                            TextField(".xcarchive のパス", text: $archivePath)
+                                .accessibilityLabel("アーカイブのパス")
+                                .autocorrectionDisabled()
+                                .onSubmit { inspectPath() }
+                            Button("照合") { inspectPath() }
+                                .disabled(inspecting || archivePath.isBlank)
+                        }
+                    }
+                }
+                WorkDetails(title: "Xcodeでのアーカイブ作成手順") {
+                    Text("Product > Archive で作成し、Organizerの「Show in Finder」で .xcarchive を表示します。")
+                    if let xcode = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.dt.Xcode") {
+                        Link("Xcodeを開く", destination: xcode)
+                    }
                 }
             }
             .fileImporter(isPresented: $choosingArchive, allowedContentTypes: [.item]) { result in
@@ -65,16 +69,16 @@ struct ArchivePane: View {
             if let result = project.archive {
                 WorkCard(title: "保存したアーカイブの結果") {
                     LabeledContent("ファイル", value: result.archiveName)
-                    LabeledContent("照合した識別情報", value: "\(result.identity.bundleID) / \(result.identity.version) / \(result.identity.build)")
-                    LabeledContent("ローカルでの署名検証", value: result.signatureValid ? "整合性を確認" : "確認できない")
-                    LabeledContent("署名に含まれるSandbox", value: result.sandboxEnabled ? "有効を確認" : "有効を確認できない")
-                    Text(result.checkedAt.formatted(date: .abbreviated, time: .shortened))
-                        .font(.caption).foregroundStyle(.secondary)
+                    Label(result.signatureValid ? "署名の整合性を確認" : "署名を確認できません", systemImage: result.signatureValid ? "checkmark.circle" : "exclamationmark.triangle")
+                    Label(result.sandboxEnabled ? "Sandboxを確認" : "Sandboxを確認できません", systemImage: result.sandboxEnabled ? "checkmark.circle" : "exclamationmark.triangle")
                     if !result.diagnostic.isBlank { Text(result.diagnostic).textSelection(.enabled) }
-                    Text("配布用のチームや証明書、実機動作は下の確認と「適用ルールと実機」に記録します。")
-                        .foregroundStyle(.secondary)
-                    Button("Finderで照合したファイルを表示") {
-                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: result.path)])
+                    WorkDetails(title: "アーカイブの確認記録") {
+                        LabeledContent("識別情報", value: "\(result.identity.bundleID) / \(result.identity.version) / \(result.identity.build)")
+                        Text(result.checkedAt.formatted(date: .abbreviated, time: .shortened))
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("Finderで表示") {
+                            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: result.path)])
+                        }
                     }
                 }
             }

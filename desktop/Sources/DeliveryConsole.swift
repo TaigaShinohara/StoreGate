@@ -27,7 +27,7 @@ struct DeliveryConsole: View {
                     Text(project.name + "  ·  " + (project.scopeConfirmed ? "Mac App Store  /  " + project.scope.version : "配信案件"))
                         .font(.subheadline).foregroundStyle(.secondary)
                     Text(step.title)
-                        .font(.system(size: 27, weight: .semibold))
+                        .font(.largeTitle.weight(.semibold))
                         .accessibilityAddTraits(.isHeader)
                         .accessibilityFocused($headingFocused)
                     if !project.phase.editable && step != .review && step != .publication {
@@ -135,6 +135,25 @@ struct WorkNotice: View {
     }
 }
 
+/// Secondary information stays reachable without competing with the current task.
+struct WorkDetails<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: Content
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var expanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 10) { content }
+                .padding(.top, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            Text(title).font(.callout.weight(.medium))
+        }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.16), value: expanded)
+    }
+}
+
 struct ScopePane: View {
     let project: DeliveryProject
     let store: DeliveryStore
@@ -148,29 +167,30 @@ struct ScopePane: View {
     ]
 
     var body: some View {
-        WorkCard(title: "今回配信する版を設定") {
-            LabeledContent("Bundle ID", value: project.bundleID)
+        WorkCard(title: "バージョンと地域") {
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
                 GridRow { Text("バージョン"); TextField("例 1.0", text: $draft.version).accessibilityLabel("バージョン") }
                 GridRow { Text("ビルド番号"); TextField("例 1", text: $draft.build).accessibilityLabel("ビルド番号") }
                 GridRow { Text("配信地域"); TextField("例 JP, US", text: $draft.regions).accessibilityLabel("配信地域") }
                 GridRow {
-                    Text("主要掲載言語")
+                    Text("主要掲載言語").accessibilityHidden(true)
                     Picker("主要掲載言語", selection: $draft.locale) {
                         if !StoreLocales.codes.contains(draft.locale) { Text("保存値を選び直す：\(draft.locale)").tag(draft.locale) }
                         ForEach(StoreLocales.codes, id: \.self) { Text(StoreLocales.label($0)).tag($0) }
                     }.labelsHidden().accessibilityLabel("主要掲載言語")
                 }
             }
-            Text("配信地域は2文字の国コードです。複数指定すると各地域の公開確認が必要です。")
-                .font(.callout).foregroundStyle(.secondary)
+            WorkDetails(title: "地域コードの入力例") {
+                Text("JP：日本、US：米国。複数の地域はカンマで区切り、公開後に各地域を確認します。")
+                    .foregroundStyle(.secondary)
+            }
             Picker("公開方法", selection: $draft.method) {
                 ForEach(ReleaseMethod.allCases) { Text($0.title).tag($0) }
             }
             Toggle("既存アプリの更新", isOn: $draft.isUpdate)
             Toggle("ログインがある", isOn: $draft.login)
             Toggle("アプリ内購入がある", isOn: $draft.purchases)
-            DisclosureGroup("当てはまる機能を選ぶ") {
+            WorkDetails(title: "その他の機能（\(draft.features.count)件選択）") {
                 ForEach(Self.features, id: \.0) { code, label in
                     Toggle(label, isOn: Binding(get: { draft.features.contains(code) }, set: {
                         if $0 { draft.features.insert(code) } else { draft.features.remove(code) }
@@ -195,9 +215,9 @@ struct AccountPane: View {
     @State private var appID = ""
 
     var body: some View {
-        WorkCard(title: "提出するアプリをApp Store Connectで開く") {
+        WorkCard(title: "ストアのアプリID") {
             Link("App Store Connectを開く", destination: ReleaseLinks.connect)
-            Text("対象アプリの「App情報」にあるApple ID（数字）を記録します。公開確認でもこのIDを照合します。")
+            Text("「App情報」にあるApple ID（数字）を入力します。")
                 .foregroundStyle(.secondary)
             if project.checks[.account] == nil && project.phase.editable {
                 TextField("Apple ID（数字）", text: $appID)
@@ -205,13 +225,15 @@ struct AccountPane: View {
                 Button("アプリIDを記録") { store.update(project.id) { $0.setStoreAppID(appID) } }
                     .disabled(!DeliveryProject.validStoreID(appID))
             }
-            if !project.storeAppID.isEmpty { LabeledContent("記録したアプリID", value: project.storeAppID) }
+            if !project.storeAppID.isEmpty && (project.checks[.account] != nil || !project.phase.editable) {
+                LabeledContent("記録したアプリID", value: project.storeAppID)
+            }
         }
         .onAppear { appID = project.storeAppID }
         CheckCard(key: .account, project: project, store: store)
         if project.checks[.account] == nil {
-            WorkCard(title: "担当者の対応を待っている") {
-                Text("待機中も掲載情報などを準備できます。提出前にはここへ戻って確認します。")
+            WorkDetails(title: project.accountWait.isBlank ? "担当者の対応待ちを記録" : "対応待ちの理由を編集") {
+                Text("待機中も他の工程を準備できます。")
                     .foregroundStyle(.secondary)
                 TextField("例 契約をAccount Holderに確認依頼中", text: $waiting, axis: .vertical)
                     .accessibilityLabel("待機理由")
@@ -241,14 +263,16 @@ struct CheckCard: View {
         WorkCard(title: key.title) {
             if let saved = project.checks[key], key != .source || !project.phase.editable || project.sourceReady {
                 Label(saved.notApplicable ? "対象外として記録済み" : "本人が確認済み", systemImage: "checkmark.circle")
-                Text(saved.note).textSelection(.enabled)
-                Text(saved.date.formatted(date: .abbreviated, time: .shortened))
-                    .font(.caption).foregroundStyle(.secondary)
-                if project.phase.editable {
-                    Button("この確認を開き直す") {
-                        note = saved.note
-                        nonApplicable = saved.notApplicable
-                        store.update(project.id) { $0.reopen(key) }
+                WorkDetails(title: "確認記録") {
+                    Text(saved.note).textSelection(.enabled)
+                    Text(saved.date.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption).foregroundStyle(.secondary)
+                    if project.phase.editable {
+                        Button("この確認を開き直す") {
+                            note = saved.note
+                            nonApplicable = saved.notApplicable
+                            store.update(project.id) { $0.reopen(key) }
+                        }
                     }
                 }
             } else {
@@ -260,7 +284,7 @@ struct CheckCard: View {
                     Toggle("この案件には当てはまらない", isOn: $nonApplicable)
                 }
                 if key == .source && !project.sourceReady {
-                    Text("先に上のMacソース監査を実行し、指摘を解消してください。").foregroundStyle(.secondary)
+                    Text("「ソース監査」で検査を実行し、指摘を解消してください。").foregroundStyle(.secondary)
                 } else if needsArchive && !project.hasMatchingArchive && !nonApplicable {
                     Text("先に配布用ビルドの照合を済ませてください。").foregroundStyle(.secondary)
                 } else if project.phase.editable {

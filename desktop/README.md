@@ -27,3 +27,5 @@ StoreGateはコードや掲載素材をストアへ送信しません。App Stor
 Macソース監査は `python3 scripts/macos-source-audit.py "/path/to/mac-app"` でも実行できます。既存ガードもmacOS専用の設定を検出するとこの監査へ振り分け、iOSとは別に報告します。複数プラットフォームの混在や容量上限、読取失敗は検査完了にしません。`.local`、`.build`、ビルド成果物、依存ライブラリとテストは対象外です。
 
 対応する掲載言語とコードは、[Appleの対応言語一覧](https://developer.apple.com/help/app-store-connect/reference/app-information/app-store-localizations)と[公式ロケールコード表](https://developer.apple.com/documentation/appstoreconnectapi/managing-metadata-in-your-app-by-using-locale-shortcodes)を2026-11-21に確認しました。日本語の監査案内の正本は `desktop/Resources/Audit.xcstrings` です。
+
+「適用ルールと実機」はソース監査・適用ルール・手動確認、「掲載情報と審査メモ」は掲載原稿・審査メモ・ストアとの照合を切り替えて使います。補助情報と保存済みの記録は見出しから開けます。[画面の情報整理と検証記録](INFORMATION-DESIGN.md)に比較結果と未確認の範囲を記載しています。

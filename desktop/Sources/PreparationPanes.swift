@@ -6,20 +6,58 @@ struct ChecksPane: View {
     let store: DeliveryStore
     let showArchive: () -> Void
     @State private var running = false
+    @State private var sourceRunning = false
     @State private var issue: String?
+    @State private var section = 0
+    @State private var selectedCheck = DeliveryCheck.source
+
+    private let manualChecks: [DeliveryCheck] = [.source, .privacy, .reviewAccess, .purchases, .runtime]
 
     var body: some View {
-        MacSourcePane(project: project, store: store)
+        Picker("確認の種類", selection: $section) {
+            Text("ソース監査").tag(0)
+            Text("適用ルール").tag(1)
+            Text("手動確認").tag(2)
+        }
+        .pickerStyle(.segmented)
+        .disabled(sourceRunning || running)
+
+        if section == 0 {
+            MacSourcePane(project: project, store: store, running: $sourceRunning)
+        } else if section == 1 {
+            rules
+        } else {
+            Picker("確認項目", selection: $selectedCheck) {
+                ForEach(manualChecks) { key in
+                    Text(key.title + (project.openChecks.contains(key) ? " · 未確認" : " · 確認済み")).tag(key)
+                }
+            }
+            if !project.hasMatchingArchive {
+                WorkNotice(text: "実機・署名の確認には配布用ビルドが必要です。", symbol: "info.circle", shade: .accentColor)
+                Button("配布用ビルドへ移動", action: showArchive)
+            }
+            CheckCard(key: selectedCheck, project: project, store: store,
+                      action: selectedCheck == .source ? ("StoreGateのチェックリスト", ReleaseLinks.checklist) : nil)
+                .id(selectedCheck)
+        }
+        Color.clear.frame(height: 0)
+            .accessibilityHidden(true)
+            .onAppear {
+                section = !project.sourceReady ? 0 : !project.rulesReady ? 1 : 2
+                selectedCheck = project.openChecks.first ?? .source
+            }
+    }
+
+    @ViewBuilder private var rules: some View {
         WorkCard(title: "配信地域・機能に当てはまるルール") {
             if !project.scopeConfirmed {
                 Text("先に配信条件を保存してください。")
             } else {
-                Text("配信地域 \(project.scope.regionCodes.joined(separator: ", "))。StoreGateに同梱された規制台帳を、この案件の設定で照合します。")
-                    .foregroundStyle(.secondary)
+                Text("配信地域：\(project.scope.regionCodes.joined(separator: ", "))")
                 if (project.rulesCurrent || !project.phase.editable), let checkedAt = project.rulesCheckedAt, let rules = project.rules {
                     Text("台帳の照合 \(checkedAt.formatted(date: .abbreviated, time: .shortened)) · \(rules.count)件")
                     if rules.isEmpty {
-                        Text("同梱台帳に該当項目はありません。他の確認は下に続きます。")
+                        Text("同梱台帳に該当項目はありません。")
                             .foregroundStyle(.secondary)
                     }
                 } else if project.rules != nil && !running {
@@ -44,14 +82,6 @@ struct ChecksPane: View {
                     }
                 }
             }
-        }
-        if !project.hasMatchingArchive {
-            WorkNotice(text: "実機や署名が必要な項目は、配布用ビルドを照合したあと確認します。", symbol: "info.circle", shade: .accentColor)
-            Button("配布用ビルドへ移動", action: showArchive)
-        }
-        ForEach([DeliveryCheck.source, .privacy, .reviewAccess, .purchases, .runtime]) { key in
-            CheckCard(key: key, project: project, store: store,
-                      action: key == .source ? ("StoreGateのチェックリスト", ReleaseLinks.checklist) : nil)
         }
     }
 
@@ -119,6 +149,7 @@ struct ListingPane: View {
     @State private var savingAudit = false
     @State private var issue: String?
     @FocusState private var fieldFocus: String?
+    @State private var section = 0
 
     private var availableLocales: [String] {
         [project.scope.locale] + project.localeDrafts.keys.filter { $0 != project.scope.locale }.sorted()
@@ -148,75 +179,94 @@ struct ListingPane: View {
             if !project.scopeConfirmed {
                 WorkNotice(text: "配信設定で掲載言語を決めてから原稿を準備します。")
             } else {
-                WorkCard(title: "掲載原稿を検査する") {
-                    Picker("掲載言語", selection: languageSelection) {
-                        ForEach(availableLocales, id: \.self) { Text(StoreLocales.label($0)).tag($0) }
-                    }
-                    .disabled(savingAudit)
-                    if project.phase.editable {
-                        HStack {
-                            Picker("追加する掲載言語", selection: $newLanguage) {
-                                Text("言語を選ぶ").tag("")
-                                ForEach(StoreLocales.codes.filter { !availableLocales.contains($0) }, id: \.self) {
-                                    Text(StoreLocales.label($0)).tag($0)
-                                }
-                            }
-                            Button("掲載言語を追加") { addLocale() }
-                                .disabled(savingAudit || !localeIsValid(newLanguage) || availableLocales.contains(newLanguage))
-                            if language != project.scope.locale {
-                                Button("この掲載言語を削除…", role: .destructive) { localeToRemove = language }
-                                    .disabled(savingAudit)
-                            }
-                        }
-                    }
-                    if project.phase.editable {
-                        Text("入力は自動で保存されます。原稿の変更後は、掲載情報を検査してください。")
-                            .font(.callout).foregroundStyle(.secondary)
-                    }
-                    if project.report(for: language) != nil && report == nil {
-                        WorkNotice(text: "監査ルールが更新されたため、この原稿を再検査してください。保存した原稿は保持しています。")
-                    }
-                    editor.id(language)
-                    actions
-                    result
+                Picker("掲載準備の作業", selection: $section) {
+                    Text("掲載原稿").tag(0)
+                    Text("審査メモ").tag(1)
+                    Text("ストアとの照合").tag(2)
                 }
-                .alert("この掲載言語を削除しますか？", isPresented: Binding(get: { localeToRemove != nil }, set: { if !$0 { localeToRemove = nil } })) {
-                    Button("キャンセル", role: .cancel) { localeToRemove = nil }
-                    Button("原稿と監査結果を削除", role: .destructive) {
-                        guard let locale = localeToRemove else { return }
-                        store.update(project.id) { $0.removeLocale(locale) }
-                        if store.saveProblem == nil { selectedLanguage = project.scope.locale; localeToRemove = nil }
-                    }
-                } message: {
-                    let locale = localeToRemove ?? language
-                    Text("\(StoreLocales.label(locale)) の原稿と監査結果を削除します。アプリ名：\(project.draft(for: locale).name)。主要掲載言語は残ります。")
+                .pickerStyle(.segmented)
+                .disabled(savingAudit)
+                if section == 0 {
+                    listingCard
+                } else if section == 1 {
+                    notesCard
+                } else {
+                    CheckCard(key: .storefront, project: project, store: store,
+                              action: ("App Store Connectを開く", ReleaseLinks.connect))
                 }
-                .onChange(of: language) { _, _ in
-                    issue = nil
-                    fieldFocus = nil
-                }
+            }
+        }
+        .onAppear {
+            section = project.listingBlocked ? 0 : project.reviewNotes.isBlank ? 1 : 2
+        }
+    }
 
-                WorkCard(title: "審査担当者への案内を書く") {
-                    Text("主要機能への手順と、アプリの目的を記入します。テスト用パスワードは記入せず、App Store Connectへ直接入力してください。")
-                        .foregroundStyle(.secondary)
-                    TextEditor(text: notes)
-                        .font(.body)
-                        .frame(minHeight: 82)
-                        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.secondary.opacity(0.3)))
-                        .accessibilityLabel("審査メモ")
-                        .disabled(!project.phase.editable)
+    private var listingCard: some View {
+        WorkCard(title: "掲載原稿") {
+            Picker("掲載言語", selection: languageSelection) {
+                ForEach(availableLocales, id: \.self) { Text(StoreLocales.label($0)).tag($0) }
+            }
+            .disabled(savingAudit)
+            if project.phase.editable {
+                WorkDetails(title: "掲載言語の追加・削除") {
                     HStack {
-                        if !project.reviewNotes.isBlank {
-                            Button("審査メモをコピー") {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(project.reviewNotes, forType: .string)
+                        Picker("追加する掲載言語", selection: $newLanguage) {
+                            Text("言語を選ぶ").tag("")
+                            ForEach(StoreLocales.codes.filter { !availableLocales.contains($0) }, id: \.self) {
+                                Text(StoreLocales.label($0)).tag($0)
                             }
                         }
-                        Link("StoreGateの審査メモ見本", destination: ReleaseLinks.reviewNotes)
+                        Button("掲載言語を追加") { addLocale() }
+                            .disabled(savingAudit || !localeIsValid(newLanguage) || availableLocales.contains(newLanguage))
+                        if language != project.scope.locale {
+                            Button("この掲載言語を削除…", role: .destructive) { localeToRemove = language }
+                                .disabled(savingAudit)
+                        }
                     }
                 }
-                CheckCard(key: .storefront, project: project, store: store, action: ("App Store Connectを開く", ReleaseLinks.connect))
-                    .disabled(savingAudit)
+            }
+            if project.report(for: language) != nil && report == nil {
+                WorkNotice(text: "監査ルールが更新されたため、この原稿を再検査してください。保存した原稿は保持しています。")
+            }
+            editor.id(language)
+            actions
+            result
+        }
+        .alert("この掲載言語を削除しますか？", isPresented: Binding(get: { localeToRemove != nil }, set: { if !$0 { localeToRemove = nil } })) {
+            Button("キャンセル", role: .cancel) { localeToRemove = nil }
+            Button("原稿と監査結果を削除", role: .destructive) {
+                guard let locale = localeToRemove else { return }
+                store.update(project.id) { $0.removeLocale(locale) }
+                if store.saveProblem == nil { selectedLanguage = project.scope.locale; localeToRemove = nil }
+            }
+        } message: {
+            let locale = localeToRemove ?? language
+            Text("\(StoreLocales.label(locale)) の原稿と監査結果を削除します。アプリ名：\(project.draft(for: locale).name)。主要掲載言語は残ります。")
+        }
+        .onChange(of: language) { _, _ in
+            issue = nil
+            fieldFocus = nil
+        }
+    }
+
+    private var notesCard: some View {
+        WorkCard(title: "審査メモ") {
+            Text("目的と主要操作の手順を記入します。パスワードはApp Store Connectへ直接入力してください。")
+                .foregroundStyle(.secondary)
+            TextEditor(text: notes)
+                .font(.body)
+                .frame(minHeight: 82)
+                .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.secondary.opacity(0.3)))
+                .accessibilityLabel("審査メモ")
+                .disabled(!project.phase.editable)
+            HStack {
+                if !project.reviewNotes.isBlank {
+                    Button("審査メモをコピー") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(project.reviewNotes, forType: .string)
+                    }
+                }
+                Link("StoreGateの審査メモ見本", destination: ReleaseLinks.reviewNotes)
             }
         }
     }
@@ -277,11 +327,14 @@ struct ListingPane: View {
     @ViewBuilder private var result: some View {
         if let issue { WorkNotice(text: issue) }
         if let report {
-            WorkNotice(text: report.blocked ? "提出前に直す指摘があります。" : "掲載文の静的監査で重大な指摘はありません。URLの到達性・画像・実際の掲載内容は別の確認です。",
+            WorkNotice(text: report.blocked ? "提出前に直す指摘があります。" : "掲載文の静的監査に重大な指摘はありません。",
                        symbol: report.blocked ? "exclamationmark.triangle" : "checkmark.circle",
                        shade: report.blocked ? .orange : .green)
-            Text("検査日時 \(report.checkedAt.formatted(date: .abbreviated, time: .shortened))")
-                .font(.caption).foregroundStyle(.secondary)
+            WorkDetails(title: "検査範囲と日時") {
+                Text("URLの到達性・画像・実際の掲載内容は「ストアとの照合」で確認します。")
+                Text(report.checkedAt.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             ForEach(Array(report.findings.enumerated()), id: \.offset) { _, item in
                 VStack(alignment: .leading, spacing: 4) {
                     Text("\(severity(item.severity)) · \(fieldLabel(item.field))").font(.callout.bold())
