@@ -6,6 +6,11 @@ import UniformTypeIdentifiers
 struct WorkspaceShell: View {
     @ObservedObject var store: DeliveryStore
     var openSample: () -> Void
+    var openOnboarding: () -> Void
+    var practiceOnboarding: () -> Void
+    var onboardingFocus: OnboardingFocus?
+    var hasPracticed: Bool
+    @Binding var startNewProject: Bool
 
     @State private var showingNewProject = false
     @State private var editingProject: DeliveryProject?
@@ -82,6 +87,13 @@ struct WorkspaceShell: View {
                 .background(.regularMaterial)
             }
         }
+        .task(id: startNewProject) {
+            guard startNewProject, store.loadProblem == nil, store.saveProblem == nil else { return }
+            await Task.yield()
+            guard !Task.isCancelled, startNewProject else { return }
+            startNewProject = false
+            showingNewProject = true
+        }
     }
 
     private func focusProjectList() {
@@ -120,7 +132,9 @@ struct WorkspaceShell: View {
 
             if store.workspace.projects.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Mac App Storeへ配信するアプリを登録します。")
+                    Text(onboardingFocus == .starting ? "アプリを登録して、最初の作業へ進みましょう。"
+                         : onboardingFocus == .checks ? "確認したいアプリを登録しましょう。"
+                         : "Mac App Storeへ配信するアプリを登録します。")
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -141,7 +155,15 @@ struct WorkspaceShell: View {
                 .disabled(store.saveProblem != nil)
             }
 
-            sampleEntry
+            HStack(spacing: 18) {
+                sampleEntry
+                Menu("使い方") {
+                    Button("はじめての使い方を見返す", action: openOnboarding)
+                    Button(hasPracticed ? "次の作業をもう一度試す" : "次の作業を試す", action: practiceOnboarding)
+                }
+                .fixedSize()
+                .disabled(store.saveProblem != nil)
+            }
 
         }
     }
