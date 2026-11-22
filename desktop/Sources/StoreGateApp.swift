@@ -91,10 +91,13 @@ struct StoreGateApp: App {
             .appendingPathComponent("release-progress.json")
     )
     @StateObject private var delivery = DeliveryStore(url: Self.workspaceFile())
+    @StateObject private var onboarding = OnboardingStore(
+        url: Self.workspaceFile().deletingLastPathComponent().appendingPathComponent("onboarding-state.json")
+    )
 
     var body: some Scene {
         WindowGroup("StoreGate") {
-            StoreGateEntry(delivery: delivery, sample: sample)
+            StoreGateEntry(delivery: delivery, sample: sample, onboarding: onboarding)
                 .frame(minWidth: 820, minHeight: 580)
                 .tint(.storeGate)
                 .onAppear { applicationDelegate.store = delivery }
@@ -131,24 +134,54 @@ final class DeliveryApplicationDelegate: NSObject, NSApplicationDelegate {
 private struct StoreGateEntry: View {
     @ObservedObject var delivery: DeliveryStore
     @ObservedObject var sample: ReleaseStore
+    @ObservedObject var onboarding: OnboardingStore
     @State private var showingSample = false
+    @State private var showingOnboarding: Bool
+    @State private var startNewProject = false
+
+    init(delivery: DeliveryStore, sample: ReleaseStore, onboarding: OnboardingStore) {
+        self.delivery = delivery
+        self.sample = sample
+        self.onboarding = onboarding
+        _showingOnboarding = State(initialValue: onboarding.automaticallyPresents(
+            hasProjects: !delivery.workspace.projects.isEmpty, workspaceHealthy: delivery.loadProblem == nil
+        ))
+    }
 
     var body: some View {
-        if showingSample {
-            VStack(spacing: 0) {
-                HStack {
-                    Button("配信案件に戻る", systemImage: "chevron.left") { showingSample = false }
-                    Spacer()
-                    Label("サンプルモード", systemImage: "testtube.2")
-                        .foregroundStyle(.secondary)
+        Group {
+            if showingOnboarding {
+                OnboardingView(store: onboarding) { destination in
+                    showingOnboarding = false
+                    startNewProject = destination == .createProject
                 }
-                .padding(12)
-                Divider()
-                ReleaseWindow(store: sample)
+            } else if showingSample {
+                VStack(spacing: 0) {
+                    HStack {
+                        Button("配信案件に戻る", systemImage: "chevron.left") { showingSample = false }
+                        Spacer()
+                        Label("サンプルモード", systemImage: "testtube.2")
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(12)
+                    Divider()
+                    ReleaseWindow(store: sample)
+                }
+            } else {
+                WorkspaceShell(store: delivery, openSample: { showingSample = true },
+                               openOnboarding: { openGuide(at: .welcome) },
+                               practiceOnboarding: { openGuide(at: .practice) },
+                               onboardingFocus: onboarding.state.focus,
+                               hasPracticed: onboarding.state.hasPracticed,
+                               startNewProject: $startNewProject)
             }
-        } else {
-            WorkspaceShell(store: delivery, openSample: { showingSample = true })
         }
+    }
+
+    private func openGuide(at page: OnboardingPage) {
+        startNewProject = false
+        _ = onboarding.restart(at: page)
+        showingOnboarding = true
     }
 }
 

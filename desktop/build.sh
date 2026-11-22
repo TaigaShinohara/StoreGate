@@ -32,6 +32,9 @@ build_icon() {
 
 case "${1:-}" in
   --test)
+    swift_build "$here/Sources/OnboardingFlow.swift" "$here/Sources/OnboardingStore.swift" \
+      "$here/Tests/OnboardingChecks.swift" -o "$build/OnboardingChecks"
+    "$build/OnboardingChecks"
     swift_build "$here/Sources/ReleaseFlow.swift" "$here/Tests/ReleaseFlowChecks.swift" -o "$build/ReleaseFlowChecks"
     "$build/ReleaseFlowChecks"
     swift_build "$here/Sources/ReleaseFlow.swift" "$here/Sources/DeliveryInputs.swift" "$here/Sources/DeliveryFlow.swift" \

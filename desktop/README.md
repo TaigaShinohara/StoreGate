@@ -29,3 +29,5 @@ Macソース監査は `python3 scripts/macos-source-audit.py "/path/to/mac-app"`
 対応する掲載言語とコードは、[Appleの対応言語一覧](https://developer.apple.com/help/app-store-connect/reference/app-information/app-store-localizations)と[公式ロケールコード表](https://developer.apple.com/documentation/appstoreconnectapi/managing-metadata-in-your-app-by-using-locale-shortcodes)を2026-11-21に確認しました。日本語の監査案内の正本は `desktop/Resources/Audit.xcstrings` です。
 
 「適用ルールと実機」はソース監査・適用ルール・手動確認、「掲載情報と審査メモ」は掲載原稿・審査メモ・ストアとの照合を切り替えて使います。補助情報と保存済みの記録は見出しから開けます。[画面の情報整理と検証記録](INFORMATION-DESIGN.md)に比較結果と未確認の範囲を記載しています。
+
+案件のない初回起動では、希望の選択、3ステップの使い方、試し操作を順に案内します。スキップや「あとで試す」で通常画面へ進めます。案件一覧の「使い方」から全体の再表示と試し操作を選べます。進み具合は案件とは別の `onboarding-state.json` に保存します。[オンボーディングのページ地図と検証記録](ONBOARDING.md)を参照してください。
