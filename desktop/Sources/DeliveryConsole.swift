@@ -245,13 +245,20 @@ struct AccountPane: View {
     }
 }
 
+struct CheckEntryDraft {
+    var note = ""
+    var notApplicable = false
+}
+
 struct CheckCard: View {
     let key: DeliveryCheck
     let project: DeliveryProject
     let store: DeliveryStore
     var action: (String, URL)? = nil
-    @State private var note = ""
-    @State private var nonApplicable = false
+    var draft: Binding<CheckEntryDraft>? = nil
+    @State private var localDraft = CheckEntryDraft()
+
+    private var form: Binding<CheckEntryDraft> { draft ?? $localDraft }
 
     private var needsArchive: Bool { [.privacy, .reviewAccess, .purchases, .runtime, .distribution].contains(key) }
     private var canSkip: Bool {
@@ -269,8 +276,7 @@ struct CheckCard: View {
                         .font(.caption).foregroundStyle(.secondary)
                     if project.phase.editable {
                         Button("この確認を開き直す") {
-                            note = saved.note
-                            nonApplicable = saved.notApplicable
+                            form.wrappedValue = CheckEntryDraft(note: saved.note, notApplicable: saved.notApplicable)
                             store.update(project.id) { $0.reopen(key) }
                         }
                     }
@@ -281,20 +287,20 @@ struct CheckCard: View {
                     Link(label, destination: url)
                 }
                 if canSkip {
-                    Toggle("この案件には当てはまらない", isOn: $nonApplicable)
+                    Toggle("この案件には当てはまらない", isOn: form.notApplicable)
                 }
                 if key == .source && !project.sourceReady {
                     Text("「ソース監査」で検査を実行し、指摘を解消してください。").foregroundStyle(.secondary)
-                } else if needsArchive && !project.hasMatchingArchive && !nonApplicable {
+                } else if needsArchive && !project.hasMatchingArchive && !form.wrappedValue.notApplicable {
                     Text("先に配布用ビルドの照合を済ませてください。").foregroundStyle(.secondary)
                 } else if project.phase.editable {
-                    TextField(nonApplicable ? "対象外の理由" : "見た画面・項目・結果など", text: $note, axis: .vertical)
-                        .accessibilityLabel(nonApplicable ? "対象外の理由" : "確認した結果")
-                    Button(nonApplicable ? "対象外として記録" : "確認結果を保存") {
-                        store.update(project.id) { $0.setCheck(key, note: note, notApplicable: nonApplicable) }
+                    TextField(form.wrappedValue.notApplicable ? "対象外の理由" : "見た画面・項目・結果など", text: form.note, axis: .vertical)
+                        .accessibilityLabel(form.wrappedValue.notApplicable ? "対象外の理由" : "確認した結果")
+                    Button(form.wrappedValue.notApplicable ? "対象外として記録" : "確認結果を保存") {
+                        store.update(project.id) { $0.setCheck(key, note: form.wrappedValue.note, notApplicable: form.wrappedValue.notApplicable) }
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(note.isBlank || (key == .account && !DeliveryProject.validStoreID(project.storeAppID))
+                    .disabled(form.wrappedValue.note.isBlank || (key == .account && !DeliveryProject.validStoreID(project.storeAppID))
                         || (key == .storefront && (project.listingBlocked || project.reviewNotes.isBlank)))
                 }
             }

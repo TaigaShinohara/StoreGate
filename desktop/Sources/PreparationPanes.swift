@@ -10,6 +10,8 @@ struct ChecksPane: View {
     @State private var issue: String?
     @State private var section = 0
     @State private var selectedCheck = DeliveryCheck.source
+    @State private var checkDrafts: [DeliveryCheck: CheckEntryDraft] = [:]
+    @State private var ruleNotes: [String: String] = [:]
 
     private let manualChecks: [DeliveryCheck] = [.source, .privacy, .reviewAccess, .purchases, .runtime]
 
@@ -37,7 +39,8 @@ struct ChecksPane: View {
                 Button("配布用ビルドへ移動", action: showArchive)
             }
             CheckCard(key: selectedCheck, project: project, store: store,
-                      action: selectedCheck == .source ? ("StoreGateのチェックリスト", ReleaseLinks.checklist) : nil)
+                      action: selectedCheck == .source ? ("StoreGateのチェックリスト", ReleaseLinks.checklist) : nil,
+                      draft: checkDraft(selectedCheck))
                 .id(selectedCheck)
         }
         Color.clear.frame(height: 0)
@@ -73,16 +76,25 @@ struct ChecksPane: View {
         if let rows = project.rules {
             if project.rulesCurrent || !project.phase.editable {
                 ForEach(rows) { row in
-                    RuleCard(row: row, project: project, store: store)
+                    ruleCard(row)
                 }
             } else if !rows.isEmpty {
                 DisclosureGroup("前回の適用ルールを参照（再確認前）") {
                     ForEach(rows) { row in
-                        RuleCard(row: row, project: project, store: store)
+                        ruleCard(row)
                     }
                 }
             }
         }
+    }
+
+    private func checkDraft(_ key: DeliveryCheck) -> Binding<CheckEntryDraft> {
+        Binding(get: { checkDrafts[key] ?? CheckEntryDraft() }, set: { checkDrafts[key] = $0 })
+    }
+
+    private func ruleCard(_ row: ApplicableRule) -> some View {
+        RuleCard(row: row, project: project, store: store,
+                 note: Binding(get: { ruleNotes[row.id] ?? "" }, set: { ruleNotes[row.id] = $0 }))
     }
 
     private func auditRules() {
@@ -107,7 +119,7 @@ private struct RuleCard: View {
     let row: ApplicableRule
     let project: DeliveryProject
     let store: DeliveryStore
-    @State private var note = ""
+    @Binding var note: String
 
     private var canEdit: Bool { project.phase.editable && project.rulesCurrent }
 
