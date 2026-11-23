@@ -49,6 +49,7 @@ DIR=""
 STDIN_JSON=""
 CMD=""
 STANDALONE_TARGET=""
+ARTIFACT_ANDROID_SDK=""
 if [ "$#" -ge 1 ] && [ -d "$1" ]; then
   DIR="$1"                                   # standalone with explicit path
   if [ "${2:-}" = "--platform" ]; then
@@ -56,6 +57,13 @@ if [ "$#" -ge 1 ] && [ -d "$1" ]; then
       ios|android|macos) STANDALONE_TARGET="$3" ;;
       *) echo "Select ios, android or macos for --platform." >&2; exit 1 ;;
     esac
+  fi
+  if [ "${4:-}" = "--android-artifact-sdk" ]; then
+    if [ "$STANDALONE_TARGET" != android ] || [ "$#" -ne 5 ] || ! [[ "${5:-}" =~ ^[1-9][0-9]{0,2}$ ]]; then
+      echo "Use --android-artifact-sdk with an Android standalone release audit and an integer API level." >&2
+      exit 1
+    fi
+    ARTIFACT_ANDROID_SDK="$5"
   fi
 elif [ "$#" -ge 1 ] && [ ! -d "$1" ]; then
   # An explicit path that is not a directory is a typo. Say so and exit 1, a path that was not read is never a pass.
@@ -1290,6 +1298,12 @@ if [ "$IS_AND" -eq 1 ]; then
   # Application module/variant SDKs are checked individually. Comments, library
   # targets and a newer sibling can never conceal an old release target.
   TSDK=""; SDK_HELPER="$(resolve_helper android-target-sdk.py || true)"
+  if [ -n "$ARTIFACT_ANDROID_SDK" ] && [ "${DIR%/}" = "$PROJECT_ROOT" ]; then
+    TSDK="$ARTIFACT_ANDROID_SDK"
+    if [ "$TSDK" -lt 36 ]; then
+      finding critical "GOOGLE-TARGET-API" "The selected Android release artifact targets API $TSDK, below the API 36 phone app floor" "Build and verify the intended release with a supported target SDK."
+    fi
+  fi
   if [ -n "$SDK_HELPER" ] && tool_ok python3 -c pass; then
     SDK_RESULT="$(python3 "$SDK_HELPER" "$FILELIST" 2>/dev/null)"; SDK_RC=$?
     if [ "$SDK_RC" -ne 0 ] || [ -z "$SDK_RESULT" ]; then
@@ -1305,7 +1319,11 @@ if [ "$IS_AND" -eq 1 ]; then
               finding critical "GOOGLE-TARGET-API" "targetSdk is $value in $detail, below the API 36 floor Play enforces for new apps and updates since 31 August 2026" "Target API 36 or higher (Wear OS and Automotive 35, TV and XR 34), or request the Play Console extension available until 1 November 2026." src 'targetSdk'
             fi ;;
           unknown)
-            mark_incomplete "Android target SDK unresolved: $value${detail:+ $detail}"
+            # An artifact supplies the effective SDK only for its selected release.
+            # Keep source warnings, including resolved lower SDKs in other variants.
+            if [ -z "$ARTIFACT_ANDROID_SDK" ] || [ "${DIR%/}" != "$PROJECT_ROOT" ]; then
+              mark_incomplete "Android target SDK unresolved: $value${detail:+ $detail}"
+            fi
             finding medium "GOOGLE-TARGET-API-UNCHECKED" "Release target SDK was not statically verified: $value${detail:+ $detail}" "Inspect each application's resolved release variant or export its native configuration; expressions and convention plugins require explicit verification." ;;
           *) mark_incomplete "invalid Android target SDK analysis output" ;;
         esac
@@ -1821,9 +1839,12 @@ print_deadlines() {
 
 echo "== App Store Compliance Guard =="
 echo "Project. $DIR"
+PROJECT_ROOT="${DIR%/}"
+if [ -n "$ARTIFACT_ANDROID_SDK" ]; then
+  echo "Android release scope. The caller supplied API $ARTIFACT_ANDROID_SDK from the selected artifact. Static results for other targets are retained."
+fi
 ROOTS="$(app_roots)"
 if [ -n "$ROOTS" ]; then
-  PROJECT_ROOT="${DIR%/}"
   echo "Apps. $(printf '%s\n' "$ROOTS" | grep -c .) app roots, each scanned on its own"
   echo ""
   POOL_FW=""; SPLIT_NATIVE=""
@@ -1916,7 +1937,7 @@ echo "Scan time. ${SECONDS}s"
 echo "Reference. docs/ in the app-store-compliance repo, and data/rejection-patterns.json"
 
 if [ "$CRIT" -gt 0 ]; then
-  if [ "${APP_STORE_GUARD_OK:-0}" = "1" ] && [ -z "$COV_WHY" ]; then
+  if [ "${APP_STORE_GUARD_OK:-0}" = "1" ] && [ -z "$COV_WHY" ] && [ -z "$ARTIFACT_ANDROID_SDK" ]; then
     echo "APP_STORE_GUARD_OK set. Critical findings present but the submission is allowed."
     log_err "override used with $CRIT critical findings"
     emit_report 0; exit 0
@@ -1924,6 +1945,8 @@ if [ "$CRIT" -gt 0 ]; then
   echo ""
   if [ -n "$COV_WHY" ]; then
     echo "BLOCKED. $CRIT critical rejection risk(s) above. Fix them and complete the required checks before rerunning."
+  elif [ -n "$ARTIFACT_ANDROID_SDK" ]; then
+    echo "BLOCKED. $CRIT critical rejection risk(s) above. Fix the findings before continuing the release."
   else
     echo "BLOCKED. $CRIT critical rejection risk(s) above. Fix them, or set APP_STORE_GUARD_OK=1 to override."
   fi

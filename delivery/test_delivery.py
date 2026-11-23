@@ -2,6 +2,7 @@ import argparse
 from contextlib import contextmanager
 import hashlib
 import json
+import os
 from pathlib import Path
 import plistlib
 import struct
@@ -13,7 +14,7 @@ import zlib
 
 from assets import inspect_images
 from builds import android_identity, build_host, lock, packaged_privacy_manifests
-from storegate import (ROOT, contexts, database, dispatch_store, execute, guard_result, import_qa, migrate,
+from storegate import (ROOT, audit, contexts, database, dispatch_store, execute, guard_result, import_qa, migrate,
                        privacy_corrections, save_config)
 from stores import Apple, Google, StoreError
 
@@ -260,6 +261,72 @@ class DeliveryTests(unittest.TestCase):
             android_identity(manifest.format(sdk="36", debug="true"))
         with self.assertRaisesRegex(ValueError, "対象SDK"):
             android_identity(manifest.format(sdk="VanillaIceCream", debug="false"))
+
+    def test_release_sdk_runs_versioned_rules_and_preserves_resolved_source_risks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            app = root / "app"
+            manifest = app / "src/main/AndroidManifest.xml"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text('<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+                                '<uses-permission android:name="android.permission.READ_CONTACTS"/>'
+                                '<application/></manifest>')
+            gradle = app / "build.gradle.kts"
+            gradle.write_text('plugins { id("com.android.application") }\n'
+                              'android { defaultConfig { targetSdk = versions.phone } }\n')
+            command = ["bash", str(ROOT / "agent-os/hooks/storegate-guard.sh"), str(root), "--platform", "android"]
+            def scan(*args, override=False):
+                env = {**os.environ, "APP_STORE_GUARD_OK": "1" if override else "0"}
+                return subprocess.run([*command, *args], capture_output=True, text=True, timeout=60, env=env)
+
+            static = scan()
+            self.assertIn("Coverage. incomplete", static.stdout)
+            self.assertNotIn("GOOGLE-CONTACTS-PICKER-REQUIRED", static.stdout)
+
+            artifact = scan("--android-artifact-sdk", "37")
+            self.assertIn("Coverage. complete", artifact.stdout)
+            self.assertIn("GOOGLE-TARGET-API-UNCHECKED", artifact.stdout)
+            self.assertIn("GOOGLE-CONTACTS-PICKER-REQUIRED", artifact.stdout)
+
+            gradle.write_text('plugins { id("com.android.application") }\n'
+                              'android { defaultConfig { targetSdk = 35 } }\n')
+            old_source = scan("--android-artifact-sdk", "37", override=True)
+            self.assertEqual(old_source.returncode, 2, old_source.stdout)
+            self.assertIn("GOOGLE-TARGET-API", old_source.stdout)
+            self.assertIn("targetSdk is 35", old_source.stdout)
+            self.assertEqual(scan("--android-artifact-sdk", "unresolved").returncode, 1)
+
+            manifest.write_text("<manifest")
+            broken = scan("--android-artifact-sdk", "37")
+            self.assertIn("Coverage. incomplete", broken.stdout)
+            self.assertIn("Android permission declarations could not be parsed", broken.stdout)
+
+    def test_delivery_uses_only_identity_verified_android_sdk(self):
+        with self.workspace() as (folder, db):
+            profile = {"repo": str(folder), "targets": {"android": {
+                "platform": "android", "bundle": "org.example.app", "locales": ["ja"],
+            }}}
+            release = {"id": "fixture", "platform": "android", "version": "1", "build": "2", "track": "internal"}
+            save_config(db, "releases", release)
+            verified = {"name": "artifact", "state": "pass", "format": ".aab", "sdk": "37", "sha256": "a" * 64}
+            report = b"Summary. critical=0 high=0 medium=0\nCoverage. complete ios=0 android=1 web=0"
+            for artifact, expected in ((verified, True), ({"name": "artifact", "state": "blocked"}, False)):
+                with self.subTest(state=artifact["state"]):
+                    fingerprints = contexts(profile, profile["targets"]["android"], release, "src", [], artifact)
+                    with patch("storegate.snapshot", return_value=({"checks": [artifact]}, fingerprints)), \
+                         patch("storegate.run", return_value=Mock(stdout=report, returncode=0)) as runner:
+                        audit(db, profile, release)
+                    command = runner.call_args.args[0]
+                    self.assertEqual("--android-artifact-sdk" in command, expected)
+                    if expected:
+                        self.assertEqual(command[-2:], ["--android-artifact-sdk", "37"])
+                    row = db.execute("SELECT data FROM evidence WHERE name='source' AND digest=?",
+                                     (fingerprints["source"],)).fetchone()
+                    proof = json.loads(row["data"]).get("android_target")
+                    self.assertEqual(proof, {"sdk": "37", "artifact_sha256": "a" * 64} if expected else None)
+            other = contexts(profile, profile["targets"]["android"], release, "src", [], {**verified, "sha256": "b" * 64})
+            original = contexts(profile, profile["targets"]["android"], release, "src", [], verified)
+            self.assertNotEqual(original["source"], other["source"])
 
     def test_packaged_privacy_checks_and_reconciles_only_exact_source_finding(self):
         with tempfile.TemporaryDirectory() as folder:
