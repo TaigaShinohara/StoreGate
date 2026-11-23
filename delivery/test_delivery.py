@@ -189,6 +189,30 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(state, "blocked")
         self.assertEqual([item["id"] for item in findings], ["APPLE-EXAMPLE"])
 
+    def test_android_deep_link_checks_inbound_filters_not_package_queries(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = root / "android/app/src/main/AndroidManifest.xml"
+            path.parent.mkdir(parents=True)
+            query = """<queries><intent>
+                <action android:name="android.intent.action.VIEW" />
+                <data android:scheme="custom" />
+                <data android:scheme="https" />
+                </intent></queries>"""
+            receiver = """<activity android:name=".Main" android:exported="true"><intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="custom" />
+                </intent-filter></activity>"""
+            template = """<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+                <application>{}</application>""" + query + "</manifest>"
+            guard = ROOT / "agent-os/hooks/storegate-guard.sh"
+            for activity, expected in (("", False), (receiver, True)):
+                path.write_text(template.format(activity))
+                report = subprocess.run(["bash", str(guard), str(root), "--platform", "android"],
+                                        capture_output=True, text=True, timeout=60).stdout
+                self.assertEqual("BOTH-UNSAFE-DEEPLINK" in report, expected)
+
     def test_aab_effective_sdk_and_debuggability(self):
         manifest = """<manifest xmlns:android="http://schemas.android.com/apk/res/android"
             package="org.example.app" android:versionName="1.0.0" android:versionCode="3">

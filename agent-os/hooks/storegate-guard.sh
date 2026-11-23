@@ -1293,9 +1293,50 @@ SDK_RESULTS
       finding high "ANDROID-INSECURE-BACKUP" "Android allowBackup is enabled without strict filters" "Disable backups using android:allowBackup=\"false\", or restrict backup folders using dataExtractionRules." src 'allowBackup="true"'
     fi
   fi
-  if grep_has 'android:scheme'; then
-    if ! grep_has 'assetlinks.json'; then
-      finding high "BOTH-UNSAFE-DEEPLINK" "Custom URL deep link schemes declared without App Links configuration" "Configure App Links (Android) using assetlinks.json verification to prevent URL hijacking." src 'android:scheme'
+  # Package-visibility queries describe outgoing intents. Only an activity's
+  # inbound VIEW filters register the app as a handler for a custom scheme.
+  if grep_has 'android:scheme' && ! grep_has 'assetlinks.json'; then
+    if tool_ok python3 -c pass; then
+      link_path="$(python3 - "$FILELIST" <<'LINKPY'
+from pathlib import Path
+import sys
+import xml.etree.ElementTree as ET
+
+ns = "{http://schemas.android.com/apk/res/android}"
+bad_xml = False
+for entry in Path(sys.argv[1]).read_text().splitlines():
+    path = Path(entry)
+    if path.name != "AndroidManifest.xml" or any(
+        parent == "src" and source_set in {"debug", "androidTest", "test"}
+        for parent, source_set in zip(path.parts, path.parts[1:])
+    ):
+        continue
+    try:
+        root = ET.parse(path).getroot()
+    except (OSError, ET.ParseError):
+        bad_xml = True
+        continue
+    for component in root.findall("./application/*"):
+        if component.tag not in {"activity", "activity-alias"} or component.get(ns + "exported") == "false":
+            continue
+        for intent in component.findall("intent-filter"):
+            receives_view = any(action.get(ns + "name") == "android.intent.action.VIEW"
+                                for action in intent.findall("action"))
+            schemes = {data.get(ns + "scheme", "").lower() for data in intent.findall("data")}
+            if receives_view and schemes - {"", "http", "https", "content", "file"}:
+                print(path)
+                sys.exit(0)
+sys.exit(2 if bad_xml else 0)
+LINKPY
+)"
+      link_code=$?
+      if [ "$link_code" -ne 0 ]; then
+        mark_incomplete "Android deep-link registration could not be checked"
+      elif [ -n "$link_path" ]; then
+        finding high "BOTH-UNSAFE-DEEPLINK" "Custom URL deep link schemes declared without App Links configuration" "Configure App Links (Android) using assetlinks.json verification to prevent URL hijacking." path "${link_path#"${DIR%/}/"}"
+      fi
+    else
+      mark_incomplete "Android deep-link registration requires Python 3"
     fi
   fi
   # Play Console refuses a debuggable APK or app bundle.
