@@ -10,13 +10,14 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
+from urllib.parse import parse_qs, urlparse
 import zlib
 
 from assets import inspect_images
 from builds import android_identity, build_host, lock, packaged_privacy_manifests
 from storegate import (ROOT, audit, contexts, database, dispatch_store, execute, guard_result, import_qa, migrate,
                        privacy_corrections, save_config)
-from stores import Apple, Google, StoreError
+from stores import Apple, Google, StoreError, apple_storefront
 
 
 def png(width=320, height=480, color=2):
@@ -403,14 +404,71 @@ class DeliveryTests(unittest.TestCase):
     def test_google_status_is_scoped_to_track_and_build(self):
         google = Google.__new__(Google)
         google.app, google.client = "org.example.app", Mock()
+        published = "RELEASE_LIFECYCLE_STATE_PUBLISHED"
+        in_review = "RELEASE_LIFECYCLE_STATE_IN_REVIEW"
         google.client.request.return_value = {"releases": [
-            {"track": "production", "activeArtifacts": [{"versionCode": 108}], "releaseLifecycleState": "AVAILABLE"},
-            {"track": "internal", "activeArtifacts": [{"versionCode": 109}], "releaseLifecycleState": "AVAILABLE"},
-            {"track": "internal", "activeArtifacts": [{"versionCode": 108}], "releaseLifecycleState": "IN_REVIEW"},
+            {"track": "production", "activeArtifacts": [{"versionCode": 108}], "releaseLifecycleState": published},
+            {"track": "qa", "activeArtifacts": [{"versionCode": 109}], "releaseLifecycleState": published},
+            {"track": "qa", "activeArtifacts": [{"versionCode": 108}], "releaseLifecycleState": in_review},
         ]}
-        result = google.status({"track": "internal", "build": "108"})
-        self.assertEqual(result["state"], "IN_REVIEW")
+        internal = {"track": "internal", "build": "108"}
+        result = google.status(internal)
+        google.client.request.assert_called_once_with("/androidpublisher/v3/applications/org.example.app/tracks/qa/releases")
+        self.assertEqual(result["state"], in_review)
+        self.assertEqual(result["track"], "internal")
         self.assertEqual(result["active_builds"], ["108"])
+        self.assertFalse(google.is_published(internal, result))
+        production = {**internal, "track": "production"}
+        self.assertTrue(google.is_published(production, google.status(production)))
+        self.assertFalse(google.is_published(production, result))
+
+    def test_apple_lookup_requires_identity_platform_and_requested_region(self):
+        row = {"trackId": 123456, "bundleId": "org.example.app", "kind": "mac-software", "version": "1.2",
+               "trackViewUrl": "https://apps.apple.com/jp/app/example/id123456?uo=4"}
+        with patch("stores.build_opener") as factory:
+            opener = factory.return_value
+            response = opener.open.return_value.__enter__.return_value
+            response.read.return_value = json.dumps({"results": [row]}).encode()
+            observed = apple_storefront("123456", "org.example.app", "macos", "JP")
+            self.assertEqual(observed, {"region": "JP", "state": "observed", "version": "1.2", "url": row["trackViewUrl"]})
+            request = opener.open.call_args.args[0]
+            self.assertEqual(parse_qs(urlparse(request.full_url).query),
+                             {"id": ["123456"], "country": ["jp"], "entity": ["macSoftware"]})
+            self.assertIsNone(request.get_header("Authorization"))
+            self.assertEqual(apple_storefront("123456", "org.example.app", "ios", "JP")["state"], "not_observed")
+            self.assertEqual(apple_storefront("123456", "org.example.other", "macos", "JP")["state"], "not_observed")
+            with self.assertRaises(StoreError):
+                apple_storefront("123456", "org.example.app", "macos", "US")
+
+    def test_apple_publication_requires_serving_build_and_all_regions(self):
+        with self.workspace() as (folder, db):
+            target = {"platform": "ios", "bundle": "org.example.app", "store_id": "123456", "locales": ["ja"]}
+            profile = {"id": "fixture", "name": "Fixture", "repo": str(ROOT), "targets": {"ios": target}}
+            release = {"id": "fixture/ios/1.2/108/production", "app": "fixture", "platform": "ios",
+                       "version": "1.2", "build": "108", "track": "production", "regions": ["JP", "US"]}
+            save_config(db, "profiles", profile)
+            save_config(db, "releases", release)
+            command = argparse.Namespace(command="verify-publication", id=release["id"])
+            remote = {"state": "READY_FOR_DISTRIBUTION", "build": "109"}
+            jp = {"region": "JP", "state": "observed", "version": "1.2"}
+            us = {"region": "US", "state": "observed", "version": "1.1"}
+            with (patch.object(Apple, "__init__", return_value=None),
+                  patch.object(Apple, "status", return_value=remote),
+                  patch.object(Apple, "public_storefront") as storefront):
+                self.assertEqual(execute(folder, db, command)["state"], "unconfirmed")
+                storefront.assert_not_called()
+                remote["build"] = "108"
+                storefront.side_effect = [jp, us]
+                result = execute(folder, db, command)
+                self.assertEqual(result["state"], "unconfirmed")
+                self.assertEqual([entry["matches"] for entry in result["storefronts"]], [True, False])
+                storefront.side_effect = [jp, {**us, "version": "1.2"}]
+                self.assertEqual(execute(folder, db, command)["state"], "verified")
+            status = execute(folder, db, argparse.Namespace(command="status", id=release["id"]))
+            evidence = next(item for item in status["checks"] if item["name"] == "publication")
+            self.assertEqual(evidence["state"], "pass")
+            self.assertEqual(evidence["remote"]["build"], "108")
+            self.assertEqual(status["regions"], ["JP", "US"])
 
     def test_permission_rejection_does_not_claim_receipt(self):
         with self.workspace() as (_, db):

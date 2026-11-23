@@ -323,7 +323,7 @@ def snapshot(db, profile, release):
     return {"id": release["id"], "app": profile["name"], "platform": target["platform"], "store": store,
             "console": console, "bundle": target["bundle"], "store_id": target.get("store_id"),
             "version": release["version"], "build": release["build"], "track": release["track"],
-            "images": images, "checks": stages, "operations": operations,
+            "regions": release.get("regions", []), "images": images, "checks": stages, "operations": operations,
             "next": blocked or "対象版のストア状態を照会してください。"}, keys
 
 
@@ -545,6 +545,7 @@ def attest(db, profile, release, args):
         item["name"] == "artifact" and item["state"] != "pass" for item in state["checks"]
     ):
         raise ValueError("対象成果物の署名と版を照合してから記録してください。")
+    evidence = {"message": args.note.strip()}
     if args.check == "publication":
         if not release["regions"] or sorted(args.region or []) != release["regions"]:
             raise ValueError("予定地域すべてで対象版の入手を確認してください。")
@@ -552,14 +553,41 @@ def attest(db, profile, release, args):
         target = profile["targets"][release["platform"]]
         adapter = Google(target) if release["platform"] == "android" else Apple(target)
         remote = adapter.status(release)
-        if release["platform"] == "android":
-            live = release["track"] == "production" and remote["state"] == "AVAILABLE" and remote.get("active_builds") == [release["build"]]
-        else:
-            live = remote["state"] in {"READY_FOR_SALE", "READY_FOR_DISTRIBUTION"} and remote.get("build") == release["build"]
-        if not live:
+        if not adapter.is_published(release, remote):
             raise ValueError("対象版が配信中であることをストアAPIから確認できません。")
-    record(db, release, args.check, keys[args.check], args.outcome, {"message": args.note.strip()})
+        evidence.update(source="manual", regions=release["regions"], remote=remote)
+    record(db, release, args.check, keys[args.check], args.outcome, evidence)
     return snapshot(db, profile, release)[0]
+
+
+def verify_publication(db, profile, release):
+    from stores import Apple
+
+    if release["platform"] == "android":
+        raise ValueError("Google Playの予定地域で配布版を確認し、公開確認の根拠を記録してください。")
+    if not release["regions"]:
+        raise ValueError("公開状況を照会する前に配信地域を登録してください。")
+    _, keys = snapshot(db, profile, release)
+    target = profile["targets"][release["platform"]]
+    adapter = Apple(target)
+    remote = adapter.status(release)
+    rows = []
+    outcome = "blocked"
+    if not adapter.is_published(release, remote):
+        message = "App Store Connectで対象版・ビルドの配信開始を確認できません。"
+    else:
+        for region in release["regions"]:
+            row = adapter.public_storefront(region)
+            rows.append({**row, "matches": row.get("version") == release["version"]})
+        missing = [row["region"] for row in rows if not row["matches"]]
+        if missing:
+            message = f"対象版の公開を確認できない地域があります（{', '.join(missing)}）。"
+        else:
+            outcome = "pass"
+            message = f"{', '.join(release['regions'])} のApp Storeで版 {release['version']} の公開を確認しました。"
+    evidence = {"message": message, "source": "apple_public_storefront", "storefronts": rows, "remote": remote}
+    record(db, release, "publication", keys["publication"], outcome, evidence)
+    return {"state": "verified" if outcome == "pass" else "unconfirmed", **evidence}
 
 
 def parse():
@@ -574,7 +602,8 @@ def parse():
     receipt = commands.add_parser("import-qa")
     receipt.add_argument("id")
     receipt.add_argument("file", type=Path)
-    for name in ("check", "build", "prepare", "status", "store-status", "submit", "publish", "attest", "qa", "capture", "review-draft", "draft", "upload-build"):
+    for name in ("check", "build", "prepare", "status", "store-status", "submit", "publish", "verify-publication",
+                 "attest", "qa", "capture", "review-draft", "draft", "upload-build"):
         command = commands.add_parser(name)
         command.add_argument("id", nargs="?" if name == "prepare" else None)
         if name in ("submit", "publish"):
@@ -651,6 +680,8 @@ def execute(folder, db, args):
             return build(db, profile, release)
         if command == "attest":
             return attest(db, profile, release, args)
+        if command == "verify-publication":
+            return verify_publication(db, profile, release)
         if command == "import-qa":
             return import_qa(db, profile, release, args.file)
         if command in ("qa", "capture"):

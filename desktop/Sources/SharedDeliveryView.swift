@@ -15,6 +15,7 @@ private struct SharedCheck: Decodable, Identifiable, Sendable {
     let name: String
     let state: String
     let message: String
+    let storefronts: [SharedStorefront]?
 
     var symbol: String {
         switch state {
@@ -25,6 +26,14 @@ private struct SharedCheck: Decodable, Identifiable, Sendable {
         default: "circle"
         }
     }
+}
+
+private struct SharedStorefront: Decodable, Identifiable, Sendable {
+    var id: String { region }
+    let region: String
+    let version: String?
+    let url: URL?
+    let matches: Bool
 }
 
 private struct SharedOperation: Decodable, Identifiable, Sendable {
@@ -53,6 +62,8 @@ private struct SharedRelease: Decodable, Identifiable, Sendable {
     let platform: String
     let version: String
     let build: String
+    let track: String?
+    let regions: [String]?
     let next: String?
     let phase: String?
     let checks: [SharedCheck]?
@@ -67,12 +78,15 @@ private struct SharedRelease: Decodable, Identifiable, Sendable {
         default: "Mac App Store"
         }
     }
+
+    var publicationRegions: [String] { track == "production" ? regions ?? [] : [] }
 }
 
 private struct SharedResponse: Decodable, Sendable {
     let releases: [SharedRelease]?
     let legacy: [SharedRelease]?
     let error: String?
+    let message: String?
     let confirmation: String?
     let migrationError: String?
     let checks: [SharedCheck]?
@@ -171,6 +185,7 @@ struct SharedDeliveryView: View {
             .frame(width: 690, height: 520)
         }
         .sheet(isPresented: $showEvidence) {
+            let regions = releases.first(where: { $0.id == selectedID })?.publicationRegions ?? []
             VStack(alignment: .leading, spacing: 14) {
                 Text("対象版の確認結果を記録").font(.headline)
                 Picker("確認項目", selection: $evidenceCheck) {
@@ -179,6 +194,12 @@ struct SharedDeliveryView: View {
                     Text("担当者による申告").tag("declarations")
                     Text("提出前チェックリスト").tag("checklist")
                     Text("ストア保存内容との照合").tag("storefront")
+                    if !regions.isEmpty { Text("公開後の入手確認").tag("publication") }
+                }
+                if evidenceCheck == "publication" {
+                    Text("対象版を入手できることを各地域で確認し、確認したURLや端末での結果を記録してください。")
+                        .foregroundStyle(.secondary)
+                    Text(regions.joined(separator: "、"))
                 }
                 TextField("確認した内容と根拠", text: $evidenceNote, axis: .vertical)
                     .lineLimit(3...5)
@@ -186,7 +207,8 @@ struct SharedDeliveryView: View {
                     Button("キャンセル") { showEvidence = false }
                     Button("確認済みとして保存") {
                         guard let selectedID else { return }
-                        perform(["attest", selectedID, evidenceCheck, "--note", evidenceNote])
+                        let scope = evidenceCheck == "publication" ? regions.flatMap { ["--region", $0] } : []
+                        perform(["attest", selectedID, evidenceCheck, "--note", evidenceNote] + scope)
                         showEvidence = false
                     }
                     .buttonStyle(.borderedProminent)
@@ -208,7 +230,11 @@ struct SharedDeliveryView: View {
                 Button("監査・準備") { perform(["prepare", release.id]) }.buttonStyle(.borderedProminent)
                 Button("ビルド") { perform(["build", release.id]) }
                 Button("ストア照会") { perform(["store-status", release.id]) }
-                Button("確認を記録…") { evidenceNote = ""; showEvidence = true }
+                Button("確認を記録…") {
+                    evidenceCheck = "account"
+                    evidenceNote = ""
+                    showEvidence = true
+                }
             }
             HStack {
                 Menu("対象版の操作") {
@@ -220,6 +246,10 @@ struct SharedDeliveryView: View {
                     Button("審査の下書きを用意") { perform(["review-draft", release.id]) }
                     Button("審査送信の内容を表示…") { perform(["submit", release.id]) }
                     Button("本番公開の内容を表示…") { perform(["publish", release.id]) }
+                    if release.platform != "android" {
+                        Button("公開先のApp Storeを照合") { perform(["verify-publication", release.id]) }
+                            .disabled(release.publicationRegions.isEmpty)
+                    }
                 }
                 if let console = release.console { Link("公式画面を開く", destination: console) }
             }
@@ -227,6 +257,16 @@ struct SharedDeliveryView: View {
         ForEach(release.checks ?? []) { check in
             DisclosureGroup {
                 Text(check.message).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                ForEach(check.storefronts ?? []) { storefront in
+                    if let url = storefront.url, let version = storefront.version {
+                        Link(destination: url) {
+                            Label("\(storefront.region) · \(version)",
+                                  systemImage: storefront.matches ? "checkmark.circle" : "exclamationmark.triangle")
+                        }
+                    } else {
+                        Text("\(storefront.region) · 公開情報を取得できません")
+                    }
+                }
             } label: {
                 Label(checkTitle(check.name), systemImage: check.symbol)
             }
@@ -292,6 +332,8 @@ struct SharedDeliveryView: View {
                     let data = try JSONSerialization.data(withJSONObject: document?["summary"] ?? [:],
                                                           options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
                     pending = Approval(arguments: arguments, digest: digest, text: String(decoding: data, as: UTF8.self))
+                } else if arguments[0] == "verify-publication" {
+                    message = decoded.error ?? decoded.message
                 } else if ["store-status", "review-draft", "draft", "upload-build"].contains(arguments[0]) ||
                             (["submit", "publish"].contains(arguments[0]) && decoded.error == nil) {
                     message = decoded.error ?? String(decoding: first, as: UTF8.self)

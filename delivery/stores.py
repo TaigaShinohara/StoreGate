@@ -82,6 +82,38 @@ def get_one(items, message):
     return items[0]
 
 
+def apple_storefront(app, bundle, platform, region):
+    query = urlencode({"id": app, "country": region.lower(),
+                       "entity": "macSoftware" if platform == "macos" else "software"})
+    request = Request("https://itunes.apple.com/lookup?" + query)
+    try:
+        with build_opener(NoRedirect()).open(request, timeout=15) as response:
+            rows = json.loads(response.read(1024 * 1024))["results"]
+        if not isinstance(rows, list):
+            raise ValueError()
+        kind = "mac-software" if platform == "macos" else "software"
+        matches = [row for row in rows if str(row.get("trackId")) == app
+                   and row.get("bundleId") == bundle and row.get("kind") == kind]
+        if not matches:
+            return {"region": region, "state": "not_observed"}
+        row = get_one(matches, f"{region} の公開情報を一意に特定できません。")
+        version = row["version"]
+        url = urlparse(row["trackViewUrl"])
+        parts = url.path.split("/")
+        if (not isinstance(version, str) or not version
+                or (url.scheme, url.netloc) != ("https", "apps.apple.com")
+                or parts[1:3] != [region.lower(), "app"] or parts[-1] != "id" + app):
+            raise ValueError()
+    except HTTPError as exc:
+        raise StoreError(f"{region} のApp Store公開情報がHTTP {exc.code}を返しました。時間をおいて再照会してください。",
+                         status=exc.code) from None
+    except StoreError:
+        raise
+    except (URLError, OSError, ValueError, KeyError, TypeError, AttributeError):
+        raise StoreError(f"{region} のApp Store公開情報を照合できません。再照会してください。") from None
+    return {"region": region, "state": "observed", "version": version, "url": row["trackViewUrl"]}
+
+
 class Apple:
     def __init__(self, target):
         if not target.get("store_id") or not target.get("provider"):
@@ -122,6 +154,13 @@ class Apple:
             if (train.get("version"), train.get("platform")) == (release["version"], platform):
                 matches.append(row)
         return get_one(matches, "対象版のビルドを一意に特定できません。") if matches else None
+
+    def is_published(self, release, remote):
+        return (remote["state"] in {"READY_FOR_SALE", "READY_FOR_DISTRIBUTION"}
+                and remote.get("build") == release["build"])
+
+    def public_storefront(self, region):
+        return apple_storefront(self.app, self.target["bundle"], self.target["platform"], region)
 
     def transporter(self, path):
         issuer = self.target.get("issuer_id")
@@ -253,6 +292,10 @@ def play_listing(metadata, locale):
     return {field: (folder / (name + ".txt")).read_text().strip() for field, name in files.items()}
 
 
+def play_track_name(track):
+    return "qa" if track == "internal" else track
+
+
 class Google:
     def __init__(self, target):
         if target.get("store_id") != target["bundle"] or not target.get("provider"):
@@ -261,7 +304,7 @@ class Google:
         self.app = target["bundle"]
 
     def status(self, release):
-        track = release["track"]
+        track = play_track_name(release["track"])
         result = self.client.request(f"/androidpublisher/v3/applications/{self.app}/tracks/{track}/releases")
         versions = []
         for item in result.get("releases", []):
@@ -270,8 +313,12 @@ class Google:
                 versions.append({"state": item["releaseLifecycleState"], "active_builds": active})
         if len(versions) > 1:
             raise StoreError("同じversionCodeが複数の配信に含まれています。Play Consoleで確認してください。")
-        return {"app": self.app, "track": track, "versionCode": release["build"],
+        return {"app": self.app, "track": release["track"], "versionCode": release["build"],
                 **(versions[0] if versions else {"state": "not_observed"})}
+
+    def is_published(self, release, remote):
+        return (release["track"] == "production" and remote["state"] == "RELEASE_LIFECYCLE_STATE_PUBLISHED"
+                and remote.get("active_builds") == [release["build"]])
 
     @property
     def edits(self):
@@ -320,7 +367,7 @@ class Google:
                 observed = [row.get("sha256", "").lower() for row in self.client.request(endpoint).get("images", [])]
                 if observed != hashes:
                     raise StoreError("Playから読み戻した画像または掲載順が一致しません。")
-        track = release["track"]
+        track = play_track_name(release["track"])
         endpoint = f"{base}/tracks/{track}"
         value = self.client.request(endpoint)
         drafts = value.get("releases", [])
@@ -333,7 +380,7 @@ class Google:
                 or any(rows[0].get(key) != field for key, field in expected.items())):
             raise StoreError("Playのトラックに別の配信があります。Play Consoleで差分を確認してください。")
         self.client.request(base + ":validate", "POST")
-        return {"state": "uncommitted_edit_verified", "edit": edit, "track": track, "versionCode": release["build"]}
+        return {"state": "uncommitted_edit_verified", "edit": edit, "track": release["track"], "versionCode": release["build"]}
 
     def describe(self, action, release, remote):
         if action == "submit" and release.get("first"):
