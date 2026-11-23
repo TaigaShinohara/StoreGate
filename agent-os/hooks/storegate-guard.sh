@@ -599,15 +599,15 @@ release_string_has() {
   # machine. Draining all input with plain grep and returning its status is deterministic.
 }
 
-# Prints the first file and line that match, relative to the scanned folder. $1 is src or manifest.
+# Prints the first file and line that match, relative to the scanned folder.
 hit_file() {
   [ -s "$FILELIST" ] || return 0
   local f n
-  if [ "$1" = "manifest" ]; then
-    f="$(grep '/AndroidManifest[.]xml$' "$FILELIST" | tr '\n' '\0' | xargs -0 grep -EIls -e "$2" 2>/dev/null | head -1)"
-  else
-    f="$(tr '\n' '\0' < "$FILELIST" | xargs -0 grep -EIls -e "$2" 2>/dev/null | head -1)"
-  fi
+  case "$1" in
+    manifest) f="$(grep '/AndroidManifest[.]xml$' "$FILELIST" | tr '\n' '\0' | xargs -0 grep -EIls -e "$2" 2>/dev/null | head -1)" ;;
+    config) f="$(grep -E "$CONFIG_FILES_RE" "$FILELIST" | tr '\n' '\0' | xargs -0 grep -EIls -e "$2" 2>/dev/null | head -1)" ;;
+    *) f="$(tr '\n' '\0' < "$FILELIST" | xargs -0 grep -EIls -e "$2" 2>/dev/null | head -1)" ;;
+  esac
   [ -n "$f" ] || return 0
   n="$(grep -En -m1 -e "$2" "$f" 2>/dev/null | cut -d: -f1)"
   printf '%s%s' "${f#"${DIR%/}"/}" "${n:+:$n}"
@@ -615,7 +615,7 @@ hit_file() {
 
 # Findings are held and printed by flush_findings, critical first (issue #842).
 F_CRIT=(); F_HIGH=(); F_MED=(); FOUND_IDS=""; POOL_PASS=0
-finding() {  # severity id title fix [src|manifest regex]. The optional pair names the file that triggered it.
+finding() {  # severity id title fix [src|manifest|config regex]. The optional pair names the file that triggered it.
   local t w=""
   case "$FOUND_IDS" in *"|$1:$2|"*) [ "$POOL_PASS" -eq 1 ] && return 0 ;; esac
   FOUND_IDS="$FOUND_IDS|$1:$2|"
@@ -1083,9 +1083,10 @@ PBXPY
       finding high "BOTH-SECURE-STORAGE" "Plain UserDefaults storage is used for sensitive credentials" "Store access tokens and sensitive credentials in iOS Keychain instead." src 'token|password|credential|secret|jwt'
     fi
   fi
-  if grep_has 'CFBundleURLSchemes'; then
+  # Provisioning tools may contain a plist template that the app never uses.
+  if config_has 'CFBundleURLSchemes'; then
     if ! grep_has 'apple-app-site-association'; then
-      finding high "BOTH-UNSAFE-DEEPLINK" "Custom URL deep link schemes declared without Universal Links configuration" "Configure Universal Links (iOS) using apple-app-site-association verification to prevent URL hijacking." src 'CFBundleURLSchemes'
+      finding high "BOTH-UNSAFE-DEEPLINK" "Custom URL deep link schemes declared without Universal Links configuration" "Configure Universal Links (iOS) using apple-app-site-association verification to prevent URL hijacking." config 'CFBundleURLSchemes'
     fi
   fi
   # Privacy manifest, the top modern Apple upload rejection since 2024

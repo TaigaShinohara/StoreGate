@@ -189,6 +189,21 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(state, "blocked")
         self.assertEqual([item["id"] for item in findings], ["APPLE-EXAMPLE"])
 
+    def test_ios_deep_link_finding_names_the_app_configuration(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "create_app.dart").write_text("const scheme = '<key>CFBundleURLSchemes</key>';")
+            info = root / "Info.plist"
+            guard = ROOT / "agent-os/hooks/storegate-guard.sh"
+            for config, expected in (({}, False), ({"CFBundleURLTypes": [{"CFBundleURLSchemes": ["acme"]}]}, True)):
+                info.write_bytes(plistlib.dumps(config))
+                report = subprocess.run(["bash", str(guard), str(root), "--platform", "ios"],
+                                        capture_output=True, text=True, timeout=60).stdout
+                self.assertEqual("BOTH-UNSAFE-DEEPLINK" in report, expected)
+                if expected:
+                    self.assertRegex(report, r"Info\.plist:\d+")
+                    self.assertNotIn("create_app.dart", report)
+
     def test_android_deep_link_checks_inbound_filters_not_package_queries(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
