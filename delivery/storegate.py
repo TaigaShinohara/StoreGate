@@ -247,6 +247,8 @@ def contexts(profile, target, release, source, images, artifact):
     )]
     listing_rules = digest(ROOT / "scripts/metadata-audit.py")
     source_rules = [identity, profile["repo"], source, guard_rules]
+    if target["platform"] == "android":
+        source_rules.extend([artifact_digest, artifact.get("sdk")])
     if target.get("privacy_manifest_sources"):
         source_rules.extend([target["privacy_manifest_sources"], artifact_digest])
     return {name: fingerprint(value) for name, value in {
@@ -376,6 +378,7 @@ def guard_result(report, code, platform, corrections=None):
 def audit(db, profile, release):
     target = profile["targets"][release["platform"]]
     state, keys = snapshot(db, profile, release)
+    artifact = next(item for item in state["checks"] if item["name"] == "artifact")
     if target.get("preflight"):
         result = run(expand(target["preflight"], release), profile["repo"])
         message = ("アプリの配布設定を検査しました。" if not result.returncode else
@@ -383,20 +386,25 @@ def audit(db, profile, release):
         record(db, release, "build_preflight", keys["build_preflight"],
                "blocked" if result.returncode else "pass", {"message": message})
     command = ["bash", str(ROOT / "agent-os/hooks/storegate-guard.sh"), profile["repo"], "--platform", release["platform"]]
+    sdk_evidence = {}
+    if target["platform"] == "android" and artifact["state"] == "pass" and artifact.get("format") == ".aab":
+        command.extend(["--android-artifact-sdk", str(int(artifact["sdk"]))])
+        sdk_evidence["android_target"] = {"sdk": artifact["sdk"], "artifact_sha256": artifact["sha256"]}
     env = dict(os.environ)
     env.pop("APP_STORE_GUARD_OK", None)
     guard = run(command, timeout=180, env=env)
     lines = [line for line in guard.stdout.decode(errors="replace").strip().splitlines() if line]
     # The standalone guard is advisory and can return zero with incomplete evidence.
     text = "\n".join(lines)
-    artifact = next(item for item in state["checks"] if item["name"] == "artifact")
     corrections = privacy_corrections(profile["repo"], target, artifact)
     result, findings = guard_result(text, guard.returncode, release["platform"], corrections)
     resolved_count = sum("resolution" in item for item in findings)
     if resolved_count:
         text = f"署名済みIPAでPrivacy Manifestの修正を {resolved_count} 件確認しました。\n" + text
+    if sdk_evidence:
+        text = f"署名済みAABの対象SDKはAPI {artifact['sdk']}です。Gradleの静的検査結果も記録しています。\n" + text
     record(db, release, "source", keys["source"], result,
-           {"message": text or "ガードの実行結果を確認してください。", "findings": findings})
+           {"message": text or "ガードの実行結果を確認してください。", "findings": findings, **sdk_evidence})
     if release.get("metadata"):
         cmd = [sys.executable, str(ROOT / "scripts/metadata-audit.py"), release["metadata"],
                "--platform", "google" if target["platform"] == "android" else "apple", "--check-urls"]
