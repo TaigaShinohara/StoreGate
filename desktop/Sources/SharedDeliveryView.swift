@@ -20,6 +20,7 @@ private struct SharedCheck: Decodable, Identifiable, Sendable {
         switch state {
         case "pass": "checkmark.circle"
         case "blocked": "exclamationmark.triangle"
+        case "not_checked": "questionmark.circle"
         case "stale": "arrow.trianglehead.clockwise"
         default: "circle"
         }
@@ -212,6 +213,7 @@ struct SharedDeliveryView: View {
             HStack {
                 Menu("対象版の操作") {
                     Button("実機QAを実行") { perform(["qa", release.id]) }
+                    Button("CIのQA結果を取り込む…") { importFile(command: "import-qa", releaseID: release.id) }
                     Button("再撮影") { perform(["capture", release.id]) }
                     Button("掲載情報と画像の下書き") { perform(["draft", release.id]) }
                     Button("提出用ビルドの投入・照合") { perform(["upload-build", release.id]) }
@@ -262,11 +264,13 @@ struct SharedDeliveryView: View {
         ][name] ?? name
     }
 
-    private func importFile(command: String) {
+    private func importFile(command: String, releaseID: String? = nil) {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
         panel.begin { response in
-            if response == .OK, let url = panel.url { perform([command, url.path]) }
+            if response == .OK, let url = panel.url {
+                perform([command] + (releaseID.map { [$0] } ?? []) + [url.path])
+            }
         }
     }
 

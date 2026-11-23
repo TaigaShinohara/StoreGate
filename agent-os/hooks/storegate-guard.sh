@@ -566,7 +566,7 @@ impl_has() {  # comment-stripped source and HTML only. a .strings, plist or json
 own_privacy_manifest() {
   find "$DIR" -mindepth 1 \( -type d \( -path '*/.github/hooks/storegate' -o -name node_modules -o -name Pods -o -name Carthage -o -name .build -o -name checkouts \
     -o -name SourcePackages -o -name .symlinks -o -name vendor -o -name .pub-cache -o -name .dart_tool -o -name DerivedData \
-    -o -name build -o -name .git ${NESTED_PRUNE[@]+"${NESTED_PRUNE[@]}"} \) -prune \) -o -name 'PrivacyInfo.xcprivacy' -print 2>/dev/null \
+    -o -name build -o -name .git ${NESTED_PRUNE[@]+"${NESTED_PRUNE[@]}"} ${PLATFORM_PRUNE[@]+"${PLATFORM_PRUNE[@]}"} \) -prune \) -o -name 'PrivacyInfo.xcprivacy' -print 2>/dev/null \
     | grep . >/dev/null
 }
 
@@ -646,12 +646,12 @@ find_app() {  # find_app <maxdepth> <find name expression...>
   find "$DIR" -mindepth 1 -maxdepth "$depth" \
     \( -type d \( -path '*/.github/hooks/storegate' -o -name node_modules -o -name Pods -o -name .git -o -name .build -o -name .local -o -name build -o \( -name dist -not -path '*/src/dist' \) \
       -o -name DerivedData -o -name vendor -o -name .dart_tool -o -name Carthage -o -name .pub-cache \
-      ${NESTED_PRUNE[@]+"${NESTED_PRUNE[@]}"} \) -prune \) \
+      ${NESTED_PRUNE[@]+"${NESTED_PRUNE[@]}"} ${PLATFORM_PRUNE[@]+"${PLATFORM_PRUNE[@]}"} \) -prune \) \
     -o \( "$@" \) -print 2>/dev/null
 }
-NESTED_PRUNE=()
+NESTED_PRUNE=(); PLATFORM_PRUNE=()
 find_tree() {  # find "$DIR" <expr>, the whole tree as before, minus the nested app roots when the root is itself an app
-  find "$DIR" \( -type d \( -path '*/.github/hooks/storegate' ${NESTED_PRUNE[@]+"${NESTED_PRUNE[@]}"} \) -prune \) -o "$@" 2>/dev/null
+  find "$DIR" \( -type d \( -path '*/.github/hooks/storegate' ${NESTED_PRUNE[@]+"${NESTED_PRUNE[@]}"} ${PLATFORM_PRUNE[@]+"${PLATFORM_PRUNE[@]}"} \) -prune \) -o "$@" 2>/dev/null
 }
 FILELIST="$(mktemp 2>/dev/null)" || FILELIST=""
 { [ -n "$FILELIST" ] && : > "$FILELIST" 2>/dev/null; } || FILELIST="/tmp/ascg.$$"
@@ -696,6 +696,18 @@ done < <(find_app 6 -name 'build.gradle.kts' -o -name 'build.gradle' -o -name 'l
 }
 
 scan_tree() {
+PLATFORM_PRUNE=()
+if [ -f "$DIR/pubspec.yaml" ]; then
+  case "$STANDALONE_TARGET" in
+    ios)     OTHER_NATIVE=(android macos linux windows web) ;;
+    android) OTHER_NATIVE=(ios darwin macos linux windows web) ;;
+    *)       OTHER_NATIVE=() ;;
+  esac
+  for OTHER_PLATFORM in ${OTHER_NATIVE[@]+"${OTHER_NATIVE[@]}"}; do
+    # Flutter builds use the platform root and matching plugin implementation plus shared Dart.
+    PLATFORM_PRUNE+=(-o -path "$DIR/$OTHER_PLATFORM" -o -path "$DIR/patches/*/$OTHER_PLATFORM")
+  done
+fi
 
 # ----- build a source file list, excluding vendor dirs -----
 # Directories are pruned by name, and only below the project root (-mindepth 1). The old full-path
@@ -708,7 +720,7 @@ find "$DIR" -mindepth 1 \
     -o -name DerivedData -o -name vendor -o -name .dart_tool -o -name Carthage \
     -o -name '*Tests' -o -name androidTest -o -name __tests__ -o -name test -o -name tests \
     -o -name integration_test -o -name .venv -o -name venv -o -name site-packages -o -name .pub-cache \
-    ${NESTED_PRUNE[@]+"${NESTED_PRUNE[@]}"} \) -prune \) \
+    ${NESTED_PRUNE[@]+"${NESTED_PRUNE[@]}"} ${PLATFORM_PRUNE[@]+"${PLATFORM_PRUNE[@]}"} \) -prune \) \
   -o -type f \( \
   -name '*.swift' -o -name '*.m' -o -name '*.mm' -o -name '*.h' -o -name '*.kt' -o -name '*.java' \
   -o -name '*.xml' -o -name '*.plist' -o -name '*.gradle' -o -name '*.kts' \

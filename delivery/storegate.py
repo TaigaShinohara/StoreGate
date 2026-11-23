@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import glob
+import importlib.util
 import json
 import os
 import re
@@ -15,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from assets import SLOTS, inspect_images
-from builds import build_commands, build_host, file_identity, git_source, lock, run, tree_digest
+from builds import build_commands, build_host, digest, file_identity, git_source, lock, run, tree_digest
 
 ROOT = Path(__file__).resolve().parents[1]
 STORES = {"ios": ("App Store Connect", "https://appstoreconnect.apple.com/apps"),
@@ -207,7 +208,8 @@ def observe(db, release, name, digest, missing):
     row = db.execute("SELECT * FROM evidence WHERE release=? AND name=? AND digest=?",
                      (release["id"], name, digest)).fetchone()
     if row:
-        return finding(name, row["state"], json.loads(row["data"])["message"])
+        evidence = json.loads(row["data"])
+        return finding(name, row["state"], evidence.pop("message"), **evidence)
     old = db.execute("SELECT 1 FROM evidence WHERE release=? AND name=? LIMIT 1", (release["id"], name)).fetchone()
     return finding(name, "stale" if old else "pending", missing)
 
@@ -220,17 +222,20 @@ def contexts(profile, target, release, source, images, artifact):
     assets = [{key: value for key, value in image.items() if key != "path"} for image in images]
     terms = [release.get(key) for key in ("regions", "price", "purchases", "publication", "first")]
     artifact_digest = artifact.get("sha256")
-    audit_rules = [tree_digest(ROOT / "data"),
-                   hashlib.sha256((ROOT / "agent-os/hooks/storegate-guard.sh").read_bytes()).hexdigest(),
-                   hashlib.sha256((ROOT / "scripts/metadata-audit.py").read_bytes()).hexdigest()]
+    guard_rules = [digest(ROOT / name) for name in (
+        "agent-os/hooks/storegate-guard.sh", "scripts/fleet-sweep.py", "scripts/macos-source-audit.py",
+        "scripts/android-target-sdk.py", "scripts/validate-privacy-manifest.py",
+        "scripts/deadline-checker.py", "data/regulatory-deadlines.json"
+    )]
+    listing_rules = digest(ROOT / "scripts/metadata-audit.py")
     return {name: fingerprint(value) for name, value in {
-        "source": [identity, profile["repo"], source, audit_rules],
+        "source": [identity, profile["repo"], source, guard_rules],
         "build_preflight": [identity, source, target.get("preflight")],
-        "metadata": [identity, listing, target["locales"], audit_rules],
+        "metadata": [identity, listing, target["locales"], listing_rules],
         "account": store,
         "device": [identity, artifact_digest],
         "declarations": [store, source, artifact_digest, terms],
-        "checklist": [store, source, artifact_digest, assets, listing, terms, audit_rules],
+        "checklist": [store, source, artifact_digest, assets, listing, terms, guard_rules, listing_rules],
         "storefront": [store, artifact_digest, assets, listing, terms],
         "qa": [identity, artifact_digest, target.get("qa_command")],
         "publication": [store, terms],
@@ -273,7 +278,8 @@ def snapshot(db, profile, release):
         stages.append(observe(db, release, name, keys[name], prompt))
     if db.execute("SELECT 1 FROM evidence WHERE release=? AND name='publication'", (release["id"],)).fetchone():
         stages.append(observe(db, release, "publication", keys["publication"], "公開状況を再確認してください。"))
-    if target.get("qa_command"):
+    has_qa = db.execute("SELECT 1 FROM evidence WHERE release=? AND name='qa'", (release["id"],)).fetchone()
+    if target.get("qa_command") or has_qa:
         stages.append(observe(db, release, "qa", keys["qa"], "対象成果物で登録済みQAを実行してください。"))
     store, console = STORES[target["platform"]]
     operations = []
@@ -300,6 +306,22 @@ def expand(argv, release):
     return [re.sub(r"\{(version|build|artifact|pack)\}", lambda match: values[match[1]], arg) for arg in argv]
 
 
+def guard_result(report, code, platform):
+    # Use the Fleet Sweep parser so deadlines and findings keep the same meaning in both workflows.
+    spec = importlib.util.spec_from_file_location("storegate_fleet", ROOT / "scripts/fleet-sweep.py")
+    fleet = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fleet)
+    findings, summaries, coverages = fleet.parse_report(report)
+    problem = fleet.integrity_problem(code, findings, summaries, coverages)
+    if any(item["severity"] in {"critical", "high"} for item in findings):
+        return "blocked", findings
+    if problem:
+        return "not_checked", findings
+    state, ios, android, _web, macos, _reason = coverages[0]
+    covered = {"ios": ios, "android": android, "macos": macos}
+    return ("pass" if state == "complete" and covered[platform] == "1" else "not_checked"), findings
+
+
 def audit(db, profile, release):
     target = profile["targets"][release["platform"]]
     _, keys = snapshot(db, profile, release)
@@ -316,12 +338,9 @@ def audit(db, profile, release):
     lines = [line for line in guard.stdout.decode(errors="replace").strip().splitlines() if line]
     # The standalone guard is advisory and can return zero with incomplete evidence.
     text = "\n".join(lines)
-    scope = {"ios": "ios", "macos": "macos", "android": "android"}[release["platform"]]
-    coverage = next((line for line in lines if line.startswith("Coverage. complete ")), "")
-    findings = bool(guard.returncode or f"{scope}=1" not in coverage
-                    or re.search(r"^\[(?:critical|high)\]|^NOT CHECKED", text, re.I | re.M))
-    record(db, release, "source", keys["source"], "blocked" if findings else "pass",
-           {"message": text or "ガードの実行結果を確認してください。"})
+    result, findings = guard_result(text, guard.returncode, release["platform"])
+    record(db, release, "source", keys["source"], result,
+           {"message": text or "ガードの実行結果を確認してください。", "findings": findings})
     if release.get("metadata"):
         cmd = [sys.executable, str(ROOT / "scripts/metadata-audit.py"), release["metadata"],
                "--platform", "google" if target["platform"] == "android" else "apple", "--check-urls"]
@@ -488,6 +507,9 @@ def parse():
     commands.add_parser("legacy").add_argument("legacy_id")
     commands.add_parser("register").add_argument("file", type=Path)
     commands.add_parser("release").add_argument("file", type=Path)
+    receipt = commands.add_parser("import-qa")
+    receipt.add_argument("id")
+    receipt.add_argument("file", type=Path)
     for name in ("check", "build", "prepare", "status", "store-status", "submit", "publish", "attest", "qa", "capture", "review-draft", "draft", "upload-build"):
         command = commands.add_parser(name)
         command.add_argument("id", nargs="?" if name == "prepare" else None)
@@ -499,6 +521,22 @@ def parse():
             command.add_argument("--note", required=True)
             command.add_argument("--region", action="append")
     return parser.parse_args()
+
+
+def import_qa(db, profile, release, path):
+    receipt = json.loads(path.read_text())
+    fields_only(receipt, "artifact_sha256 suite run outcome")
+    state, keys = snapshot(db, profile, release)
+    artifact = next(item for item in state["checks"] if item["name"] == "artifact")
+    if artifact["state"] != "pass" or receipt["artifact_sha256"] != artifact["sha256"]:
+        raise ValueError("CIのQA結果が対象の署名済み成果物と一致しません。")
+    if receipt["outcome"] not in {"pass", "blocked"} or any(
+        not isinstance(receipt[key], str) or not receipt[key].strip() for key in ("suite", "run")
+    ):
+        raise ValueError("CIのテスト名、実行記録、結果を確認してください。")
+    record(db, release, "qa", keys["qa"], receipt["outcome"],
+           {"message": f"CIのQA結果を取り込みました。{receipt['suite']} · {receipt['run']}", "kind": "ci"})
+    return snapshot(db, profile, release)[0]
 
 
 def execute(folder, db, args):
@@ -549,6 +587,8 @@ def execute(folder, db, args):
             return build(db, profile, release)
         if command == "attest":
             return attest(db, profile, release, args)
+        if command == "import-qa":
+            return import_qa(db, profile, release, args.file)
         if command in ("qa", "capture"):
             argv = target.get(command + "_command")
             if not argv:
@@ -577,7 +617,6 @@ def execute(folder, db, args):
             remote = adapter.status(release)
             if remote["state"] != "PREPARE_FOR_SUBMISSION":
                 raise ValueError("App Store Connectで対象版の編集可能な下書きを確認してください。")
-            from builds import digest
             sha = next(item["sha256"] for item in state["checks"] if item["name"] == "artifact")
             known = history(db, release, "upload-build")
             if known and known[0]["digest"] != sha:
@@ -618,21 +657,21 @@ def execute(folder, db, args):
                             "metadata": release["metadata"], "remote": adapter.status(release)}
                 require_ready(state, {"device", "declarations", "checklist", "storefront", "qa", "publication"})
                 artifact = next(item["sha256"] for item in state["checks"] if item["name"] == "artifact")
-                digest = fingerprint([target, keys, artifact])
+                edit_key = fingerprint([target, keys, artifact])
                 prior = history(db, release, "play-edit")
-                if prior and (prior[0]["state"] == "opening" or prior[0]["digest"] != digest):
+                if prior and (prior[0]["state"] == "opening" or prior[0]["digest"] != edit_key):
                     raise ValueError("既存の編集中のPlay変更を、公式画面と照合してください。")
                 if prior:
                     edit = json.loads(prior[0]["data"])["edit"]
                 else:
                     adapter.status(release)
-                    save_operation(db, release, "play-edit", digest, "opening", {})
+                    save_operation(db, release, "play-edit", edit_key, "opening", {})
                     edit = adapter.new_edit()
                     if not isinstance(edit, str) or not re.fullmatch(r"[a-zA-Z0-9_-]+", edit):
                         raise ValueError("Playが返した編集IDを確認できません。")
-                    save_operation(db, release, "play-edit", digest, "open", {"edit": edit})
+                    save_operation(db, release, "play-edit", edit_key, "open", {"edit": edit})
                 result = adapter.stage_edit(edit, release, state["images"], target["locales"], artifact)
-                save_operation(db, release, "play-edit", digest, "validated", {"edit": edit})
+                save_operation(db, release, "play-edit", edit_key, "validated", {"edit": edit})
                 return result
             return adapter.sync_draft(release, state["images"])
         if command == "review-draft":
