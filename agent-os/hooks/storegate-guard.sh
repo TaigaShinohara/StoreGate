@@ -1651,10 +1651,13 @@ dir_has_app_marker() {  # $1 dir. 0 when an app marker sits at its top level
 # Issue #656. Under a root framework app, a bare native project with its own Info.plist or AndroidManifest.xml is a
 # second app, unless a root build file (settings.gradle, Podfile, a workspace) names its path. A native root is unchanged.
 bare_native_apart() {  # $1 candidate dir below $DIR
-  local rel="${1#"${DIR%/}"/}" f
+  local rel="${1#"${DIR%/}"/}" folded f
   case "$rel" in ios|ios/*|android|android/*) return 1 ;; esac
   # A folder named exactly demo, example, sample, or playground (or plural) holds a repo demo, so it stays in the root scan.
-  printf '%s' "$rel" | tr '[:upper:]' '[:lower:]' | tr '/' '\n' | grep -qxE 'demos?|examples?|samples?|playgrounds?' && return 1
+  folded="$(tr '[:upper:]' '[:lower:]' <<< "$rel")"
+  case "/$folded/" in
+    */demo/*|*/demos/*|*/example/*|*/examples/*|*/sample/*|*/samples/*|*/playground/*|*/playgrounds/*) return 1 ;;
+  esac
   find "$1" -maxdepth 4 \( -type d \( -path '*/.github/hooks/storegate' -o -name Pods -o -name node_modules -o -name build \) -prune \) \
     -o \( -name 'Info.plist' -o -name 'AndroidManifest.xml' \) -print 2>/dev/null | grep . >/dev/null || return 1
   # Only a shippable app splits off. a library module or a local native module stays with the app that uses it.
