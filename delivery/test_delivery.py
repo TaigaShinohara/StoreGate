@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 import zlib
 
 from assets import inspect_images
-from builds import android_identity, lock, packaged_privacy_manifests
+from builds import android_identity, build_host, lock, packaged_privacy_manifests
 from storegate import (ROOT, contexts, database, dispatch_store, execute, guard_result, import_qa, migrate,
                        privacy_corrections, save_config)
 from stores import Apple, Google, StoreError
@@ -68,6 +68,24 @@ class DeliveryTests(unittest.TestCase):
             item = execute(folder, db, argparse.Namespace(command="legacy", legacy_id="a1"))
             self.assertEqual(item["records"][0]["note"], "old build")
             self.assertEqual(path.read_text(), raw)
+
+    def test_build_requires_free_space_on_repository_and_temporary_volumes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            scratch = Path(folder)
+            repo = scratch / "repo"
+            repo.mkdir()
+            enough = 20 * 1024**3
+            for low_space_path, diagnostic in ((scratch, "一時ディレクトリ"), (repo, "ビルド先")):
+                with self.subTest(path=low_space_path):
+                    def usage(path):
+                        return Mock(free=1024 if path == low_space_path else enough)
+
+                    with (patch.dict("builds.os.environ", {"TMPDIR": folder}),
+                          patch("builds.shutil.disk_usage", side_effect=usage),
+                          patch("builds.run") as run_command):
+                        with self.assertRaisesRegex(ValueError, diagnostic), build_host(repo):
+                            self.fail("A build must not run with insufficient free space")
+                        run_command.assert_not_called()
 
     def test_concurrent_process_cannot_enter_lock(self):
         with self.workspace() as (folder, _):

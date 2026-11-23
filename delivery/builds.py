@@ -91,9 +91,13 @@ def lock(path):
 
 @contextmanager
 def build_host(repo):
-    path = Path(tempfile.gettempdir()) / f"storegate-build-{os.getuid()}.lock"
+    scratch = Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
+    minimum_free = 10 * 1024**3
+    if shutil.disk_usage(scratch).free < minimum_free:
+        raise ValueError("ビルド用の一時ディレクトリがあるボリュームの空き容量が10 GiBを下回っています。")
+    path = scratch / f"storegate-build-{os.getuid()}.lock"
     with lock(path):
-        if shutil.disk_usage(repo).free < 10 * 1024**3:
+        if shutil.disk_usage(repo).free < minimum_free:
             raise ValueError("ビルド先の空き容量が10 GiBを下回っています。")
         if shutil.which("sysctl") and os.uname().sysname == "Darwin":
             pressure = run(["sysctl", "-n", "kern.memorystatus_vm_pressure_level"])
