@@ -247,6 +247,12 @@ class Apple:
         return remote.get("state") in accepted
 
 
+def play_listing(metadata, locale):
+    folder = Path(metadata) / locale
+    files = {"title": "name", "shortDescription": "short_description", "fullDescription": "full_description"}
+    return {field: (folder / (name + ".txt")).read_text().strip() for field, name in files.items()}
+
+
 class Google:
     def __init__(self, target):
         if target.get("store_id") != target["bundle"] or not target.get("provider"):
@@ -290,15 +296,13 @@ class Google:
         if str(bundle["versionCode"]) != release["build"] or bundle.get("sha256", "").lower() != artifact_sha:
             raise StoreError("Playが返したversionCodeまたはAABのハッシュが一致しません。")
         for locale in locales:
-            folder = Path(release["metadata"]) / locale
-            files = {"title": "name", "shortDescription": "short_description", "fullDescription": "full_description"}
-            listing = {field: (folder / (file + ".txt")).read_text().strip() for field, file in files.items()}
+            listing = play_listing(release["metadata"], locale)
             url = f"{base}/listings/{locale}"
             self.client.request(url, "PUT", {**listing, "language": locale})
             result = self.client.request(url)
             if any(result.get(key) != value for key, value in listing.items()):
                 raise StoreError("Playから読み戻した原稿が一致しません。")
-            for slot, image_type in {"phone": "phoneScreenshots", "feature": "featureGraphic"}.items():
+            for slot, image_type in {"phone": "phoneScreenshots", "feature": "featureGraphic", "icon": "icon"}.items():
                 expected = [row for row in images if row["locale"] == locale and row["slot"] == slot]
                 if not expected:
                     continue
