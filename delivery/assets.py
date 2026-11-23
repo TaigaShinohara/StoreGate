@@ -8,10 +8,13 @@ from pathlib import Path
 
 PNG = b"\x89PNG\r\n\x1a\n"
 SLOTS = {
-    "ios": {"apple/ipad": "ipad", "apple/iphone": "iphone", "apple/iphone-medium": "iphone-medium"},
-    "android": {"google-play/phone": "phone", "google-play/feature": "feature"},
-    "macos": {"apple/mac": "mac"},
+    "ios": {"screenshots/apple/ipad": "ipad", "screenshots/apple/iphone": "iphone",
+            "screenshots/apple/iphone-medium": "iphone-medium"},
+    "android": {"screenshots/google-play/phone": "phone", "screenshots/google-play/feature": "feature",
+                "promo/google-play": "feature", "icon/google-play": "icon"},
+    "macos": {"screenshots/apple/mac": "mac"},
 }
+PLAY_COUNTS = {"phone": (2, 8), "feature": (1, 1), "icon": (1, 1)}
 ORDER = re.compile(r"-(\d+)(?:-|$)")
 
 
@@ -40,7 +43,7 @@ def inspect_png(data):
         if kind == b"IDAT":
             pixels |= length > 0
         if kind == b"IEND" and length == 0 and end == len(data) and pixels:
-            return (*dimensions, alpha)
+            return (*dimensions, color, alpha)
         offset = end
     raise ValueError("incomplete PNG")
 
@@ -48,6 +51,8 @@ def inspect_png(data):
 def inspect_images(pack, platform, locales, default_locale, expected_slots):
     if not pack:
         return [], ["素材パックを登録してください。"]
+    if platform == "android":
+        expected_slots = {**{slot: limits[0] for slot, limits in PLAY_COUNTS.items()}, **expected_slots}
     root = Path(pack).resolve()
     try:
         manifest = json.loads((root / "07_submission/image-manifest.json").read_text())
@@ -63,34 +68,45 @@ def inspect_images(pack, platform, locales, default_locale, expected_slots):
             continue
         relative = Path(item["file"])
         parts = relative.parts
-        if parts[:2] != ("02_images", "screenshots") or len(parts) < 5:
+        base_length = 4 if parts[1:2] == ("screenshots",) else 3
+        if parts[:1] != ("02_images",) or len(parts) not in (base_length + 1, base_length + 2):
             problems.append("掲載画像のパスが不正です。")
             continue
-        folder = "/".join(parts[2:4])
+        folder = "/".join(parts[1:base_length])
         slot = SLOTS[platform].get(folder)
         if not slot:
             if not any(folder in slots for slots in SLOTS.values()):
-                problems.append(f"未登録の端末枠です。{folder}")
+                problems.append(f"未登録の掲載枠です。{folder}")
             continue
         match = ORDER.search(relative.stem)
-        locale = item.get("locale", parts[4] if len(parts) == 6 else default_locale)
-        order = item.get("order", int(match[1]) if match else (1 if slot == "feature" else 0))
+        locale = item.get("locale", parts[base_length] if len(parts) == base_length + 2 else default_locale)
+        order = item.get("order", int(match[1]) if match else (1 if slot in {"feature", "icon"} else 0))
         try:
             path = (root / relative).resolve()
             key = (locale, slot, order)
-            if (".." in parts or len(parts) not in (5, 6) or not path.is_relative_to(root)
+            if (".." in parts or not path.is_relative_to(root)
                     or locale not in locales or type(order) is not int or not 1 <= order <= 10 or key in seen):
                 raise ValueError()
-            if path.suffix.lower() != ".png" or path.stat().st_size > 8 * 1024 * 1024:
+            limit = 1024 * 1024 if slot == "icon" else 8 * 1024 * 1024
+            if path.suffix.lower() != ".png" or path.stat().st_size > limit:
                 raise ValueError()
             data = path.read_bytes()
-            width, height, alpha = inspect_png(data)
+            width, height, color, alpha = inspect_png(data)
             digest = hashlib.sha256(data).hexdigest()
-            if (alpha or (width, height) != (item.get("width"), item.get("height"))
+            if ((width, height) != (item.get("width"), item.get("height"))
                     or len(data) != item.get("bytes") or digest != item.get("sha256")):
+                raise ValueError()
+            if slot == "icon":
+                if (width, height, color) != (512, 512, 6):
+                    raise ValueError()
+            elif alpha or (platform == "android" and color != 2):
                 raise ValueError()
             if slot == "feature" and (width, height) != (1024, 500):
                 raise ValueError()
+            if slot == "phone":
+                short, long = sorted((width, height))
+                if short < 320 or long > 3840 or long * 10 > short * 23:
+                    raise ValueError()
         except (OSError, TypeError, ValueError):
             problems.append(f"画像の形式・寸法・順序・ハッシュを確認できません。{relative.name}")
             continue

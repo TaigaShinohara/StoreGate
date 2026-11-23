@@ -15,7 +15,7 @@ from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from assets import SLOTS, inspect_images
+from assets import PLAY_COUNTS, SLOTS, inspect_images
 from builds import build_commands, build_host, digest, file_identity, git_source, lock, run, tree_digest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -96,8 +96,10 @@ def profile_from(source):
             token(locale)
         target["locales"] = locales
         slots = target.get("slots", {})
-        if (slots.keys() - set(SLOTS[platform].values())
-                or any(type(count) is not int or not 1 <= count <= 10 for count in slots.values())):
+        limits = PLAY_COUNTS if platform == "android" else {slot: (1, 10) for slot in SLOTS[platform].values()}
+        if (slots.keys() - limits.keys()
+                or any(type(count) is not int or not limits[slot][0] <= count <= limits[slot][1]
+                       for slot, count in slots.items())):
             raise ValueError("端末枠と画像の枚数を確認してください。")
         for name in ("project", "archive", "export_options", "export_path", "bundletool"):
             if target.get(name):
@@ -603,9 +605,16 @@ def execute(folder, db, args):
             elif result.returncode:
                 raise ValueError(f"再撮影の終了コードは {result.returncode} です。")
             return snapshot(db, profile, release)[0]
-        from stores import Apple, Google
+        from stores import Apple, Google, play_listing
         state, keys = snapshot(db, profile, release)
-        adapter = Google(target) if release["platform"] == "android" else Apple(target)
+        android = release["platform"] == "android"
+        if command == "draft" and android and (not target.get("play_staging") or release["track"] == "production"):
+            require_ready(state, {item["name"] for item in state["checks"]} - {"screenshots", "metadata"})
+            return {"state": "console_required", "console": state["console"], "images": state["images"],
+                    "metadata": release["metadata"], "bundle": target["bundle"], "track": release["track"],
+                    "version": release["version"], "build": release["build"],
+                    "listing": {locale: play_listing(release["metadata"], locale) for locale in target["locales"]}}
+        adapter = Google(target) if android else Apple(target)
         if command == "upload-build":
             if release["platform"] == "android":
                 raise ValueError("AndroidのAABはPlay Consoleまたは登録済みのテストトラック編集中に投入してください。")
@@ -652,9 +661,6 @@ def execute(folder, db, args):
             required = {"screenshots", "metadata", "account"}
             require_ready(state, set(item["name"] for item in state["checks"]) - required)
             if release["platform"] == "android":
-                if not target.get("play_staging") or release["track"] == "production":
-                    return {"state": "console_required", "console": state["console"], "images": state["images"],
-                            "metadata": release["metadata"], "remote": adapter.status(release)}
                 require_ready(state, {"device", "declarations", "checklist", "storefront", "qa", "publication"})
                 artifact = next(item["sha256"] for item in state["checks"] if item["name"] == "artifact")
                 edit_key = fingerprint([target, keys, artifact])
