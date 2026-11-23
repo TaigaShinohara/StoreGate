@@ -16,6 +16,12 @@ private struct SharedCheck: Decodable, Identifiable, Sendable {
     let state: String
     let message: String
     let storefronts: [SharedStorefront]?
+    let findingCounts: SharedFindingCounts?
+
+    enum CodingKeys: String, CodingKey {
+        case name, state, message, storefronts
+        case findingCounts = "finding_counts"
+    }
 
     var symbol: String {
         switch state {
@@ -25,6 +31,18 @@ private struct SharedCheck: Decodable, Identifiable, Sendable {
         case "stale": "arrow.trianglehead.clockwise"
         default: "circle"
         }
+    }
+}
+
+private struct SharedFindingCounts: Decodable, Sendable {
+    let unresolved: [String: Int]
+    let resolved: Int
+
+    var summary: String {
+        let critical = unresolved["critical", default: 0]
+        let high = unresolved["high", default: 0]
+        let medium = unresolved["medium", default: 0]
+        return "未対応の指摘 重大 \(critical)件・高 \(high)件・中 \(medium)件"
     }
 }
 
@@ -268,7 +286,16 @@ struct SharedDeliveryView: View {
                     }
                 }
             } label: {
-                Label(checkTitle(check.name), systemImage: check.symbol)
+                VStack(alignment: .leading, spacing: 3) {
+                    Label(checkTitle(check.name), systemImage: check.symbol)
+                    if let counts = check.findingCounts {
+                        Text(counts.summary).font(.caption).foregroundStyle(.secondary)
+                        if counts.resolved > 0 {
+                            Text("署名済み成果物で解消を確認 \(counts.resolved)件")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
         }
         if let operations = release.operations, !operations.isEmpty {

@@ -16,7 +16,7 @@ import zlib
 from assets import inspect_images
 from builds import android_identity, build_host, lock, packaged_privacy_manifests
 from storegate import (ROOT, audit, contexts, database, dispatch_store, execute, guard_result, import_qa, migrate,
-                       privacy_corrections, save_config)
+                       privacy_corrections, record, save_config, snapshot)
 from stores import Apple, Google, StoreError, apple_storefront
 
 
@@ -371,6 +371,48 @@ class DeliveryTests(unittest.TestCase):
             before = contexts({"repo": str(root)}, target, release, "src", [], artifact)
             after = contexts({"repo": str(root)}, target, release, "src", [], {**artifact, "sha256": "sha-two"})
             self.assertNotEqual(before["source"], after["source"])
+
+    def test_source_status_counts_unresolved_findings_from_current_saved_evidence(self):
+        with self.workspace() as (folder, db):
+            target = {"platform": "ios", "bundle": "org.example.app", "locales": ["ja"],
+                      "privacy_manifest_sources": {"plugin/PrivacyInfo.xcprivacy": "plugin.bundle/PrivacyInfo.xcprivacy"}}
+            profile = {"name": "Fixture", "repo": str(folder), "targets": {"ios": target}}
+            release = {"id": "fixture", "platform": "ios", "version": "1", "build": "2", "track": "production"}
+            save_config(db, "releases", release)
+            artifact = {"name": "artifact", "state": "pass", "sha256": "a" * 64}
+            keys = contexts(profile, target, release, "src", [], artifact)
+            data = {
+                "message": "Summary. critical=1 high=1 medium=1",
+                "findings": [
+                    {"severity": "critical", "resolution": {"artifact_sha256": artifact["sha256"]}},
+                    {"severity": "high"},
+                    {"severity": "medium"},
+                ],
+            }
+            record(db, release, "source", keys["source"], "blocked", data)
+
+            def source_check():
+                state, _ = snapshot(db, profile, release)
+                return next(item for item in state["checks"] if item["name"] == "source")
+
+            with patch("storegate.git_source", return_value="src"), \
+                 patch("storegate.inspect_images", return_value=([], [])), \
+                 patch("storegate.artifact_status", return_value=artifact):
+                check = source_check()
+                self.assertEqual(check["state"], "blocked")
+                self.assertEqual(check["finding_counts"], {
+                    "unresolved": {"critical": 0, "high": 1, "medium": 1}, "resolved": 1,
+                })
+                self.assertEqual(check["message"], data["message"])
+                self.assertEqual(check["findings"], data["findings"])
+
+                record(db, release, "source", keys["source"], "not_checked", {**data, "findings": []})
+                self.assertNotIn("finding_counts", source_check())
+
+                artifact["sha256"] = "b" * 64
+                check = source_check()
+                self.assertEqual(check["state"], "stale")
+                self.assertNotIn("finding_counts", check)
 
     def test_ci_report_must_be_for_the_signed_artifact(self):
         with self.workspace() as (folder, db):
