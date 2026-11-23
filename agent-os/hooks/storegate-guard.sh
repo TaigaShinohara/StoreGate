@@ -599,15 +599,15 @@ release_string_has() {
   # machine. Draining all input with plain grep and returning its status is deterministic.
 }
 
-# Prints the first file and line that match, relative to the scanned folder. $1 is src or manifest.
+# Prints the first file and line that match, relative to the scanned folder.
 hit_file() {
   [ -s "$FILELIST" ] || return 0
   local f n
-  if [ "$1" = "manifest" ]; then
-    f="$(grep '/AndroidManifest[.]xml$' "$FILELIST" | tr '\n' '\0' | xargs -0 grep -EIls -e "$2" 2>/dev/null | head -1)"
-  else
-    f="$(tr '\n' '\0' < "$FILELIST" | xargs -0 grep -EIls -e "$2" 2>/dev/null | head -1)"
-  fi
+  case "$1" in
+    manifest) f="$(grep '/AndroidManifest[.]xml$' "$FILELIST" | tr '\n' '\0' | xargs -0 grep -EIls -e "$2" 2>/dev/null | head -1)" ;;
+    config) f="$(grep -E "$CONFIG_FILES_RE" "$FILELIST" | tr '\n' '\0' | xargs -0 grep -EIls -e "$2" 2>/dev/null | head -1)" ;;
+    *) f="$(tr '\n' '\0' < "$FILELIST" | xargs -0 grep -EIls -e "$2" 2>/dev/null | head -1)" ;;
+  esac
   [ -n "$f" ] || return 0
   n="$(grep -En -m1 -e "$2" "$f" 2>/dev/null | cut -d: -f1)"
   printf '%s%s' "${f#"${DIR%/}"/}" "${n:+:$n}"
@@ -615,7 +615,7 @@ hit_file() {
 
 # Findings are held and printed by flush_findings, critical first (issue #842).
 F_CRIT=(); F_HIGH=(); F_MED=(); FOUND_IDS=""; POOL_PASS=0
-finding() {  # severity id title fix [src|manifest regex]. The optional pair names the file that triggered it.
+finding() {  # severity id title fix [src|manifest|config regex]. The optional pair names the file that triggered it.
   local t w=""
   case "$FOUND_IDS" in *"|$1:$2|"*) [ "$POOL_PASS" -eq 1 ] && return 0 ;; esac
   FOUND_IDS="$FOUND_IDS|$1:$2|"
@@ -1083,9 +1083,10 @@ PBXPY
       finding high "BOTH-SECURE-STORAGE" "Plain UserDefaults storage is used for sensitive credentials" "Store access tokens and sensitive credentials in iOS Keychain instead." src 'token|password|credential|secret|jwt'
     fi
   fi
-  if grep_has 'CFBundleURLSchemes'; then
+  # Provisioning tools may contain a plist template that the app never uses.
+  if config_has 'CFBundleURLSchemes'; then
     if ! grep_has 'apple-app-site-association'; then
-      finding high "BOTH-UNSAFE-DEEPLINK" "Custom URL deep link schemes declared without Universal Links configuration" "Configure Universal Links (iOS) using apple-app-site-association verification to prevent URL hijacking." src 'CFBundleURLSchemes'
+      finding high "BOTH-UNSAFE-DEEPLINK" "Custom URL deep link schemes declared without Universal Links configuration" "Configure Universal Links (iOS) using apple-app-site-association verification to prevent URL hijacking." config 'CFBundleURLSchemes'
     fi
   fi
   # Privacy manifest, the top modern Apple upload rejection since 2024
@@ -1293,9 +1294,50 @@ SDK_RESULTS
       finding high "ANDROID-INSECURE-BACKUP" "Android allowBackup is enabled without strict filters" "Disable backups using android:allowBackup=\"false\", or restrict backup folders using dataExtractionRules." src 'allowBackup="true"'
     fi
   fi
-  if grep_has 'android:scheme'; then
-    if ! grep_has 'assetlinks.json'; then
-      finding high "BOTH-UNSAFE-DEEPLINK" "Custom URL deep link schemes declared without App Links configuration" "Configure App Links (Android) using assetlinks.json verification to prevent URL hijacking." src 'android:scheme'
+  # Package-visibility queries describe outgoing intents. Only an activity's
+  # inbound VIEW filters register the app as a handler for a custom scheme.
+  if grep_has 'android:scheme' && ! grep_has 'assetlinks.json'; then
+    if tool_ok python3 -c pass; then
+      link_path="$(python3 - "$FILELIST" <<'LINKPY'
+from pathlib import Path
+import sys
+import xml.etree.ElementTree as ET
+
+ns = "{http://schemas.android.com/apk/res/android}"
+bad_xml = False
+for entry in Path(sys.argv[1]).read_text().splitlines():
+    path = Path(entry)
+    if path.name != "AndroidManifest.xml" or any(
+        parent == "src" and source_set in {"debug", "androidTest", "test"}
+        for parent, source_set in zip(path.parts, path.parts[1:])
+    ):
+        continue
+    try:
+        root = ET.parse(path).getroot()
+    except (OSError, ET.ParseError):
+        bad_xml = True
+        continue
+    for component in root.findall("./application/*"):
+        if component.tag not in {"activity", "activity-alias"} or component.get(ns + "exported") == "false":
+            continue
+        for intent in component.findall("intent-filter"):
+            receives_view = any(action.get(ns + "name") == "android.intent.action.VIEW"
+                                for action in intent.findall("action"))
+            schemes = {data.get(ns + "scheme", "").lower() for data in intent.findall("data")}
+            if receives_view and schemes - {"", "http", "https", "content", "file"}:
+                print(path)
+                sys.exit(0)
+sys.exit(2 if bad_xml else 0)
+LINKPY
+)"
+      link_code=$?
+      if [ "$link_code" -ne 0 ]; then
+        mark_incomplete "Android deep-link registration could not be checked"
+      elif [ -n "$link_path" ]; then
+        finding high "BOTH-UNSAFE-DEEPLINK" "Custom URL deep link schemes declared without App Links configuration" "Configure App Links (Android) using assetlinks.json verification to prevent URL hijacking." path "${link_path#"${DIR%/}/"}"
+      fi
+    else
+      mark_incomplete "Android deep-link registration requires Python 3"
     fi
   fi
   # Play Console refuses a debuggable APK or app bundle.
@@ -1609,10 +1651,13 @@ dir_has_app_marker() {  # $1 dir. 0 when an app marker sits at its top level
 # Issue #656. Under a root framework app, a bare native project with its own Info.plist or AndroidManifest.xml is a
 # second app, unless a root build file (settings.gradle, Podfile, a workspace) names its path. A native root is unchanged.
 bare_native_apart() {  # $1 candidate dir below $DIR
-  local rel="${1#"${DIR%/}"/}" f
+  local rel="${1#"${DIR%/}"/}" folded f
   case "$rel" in ios|ios/*|android|android/*) return 1 ;; esac
   # A folder named exactly demo, example, sample, or playground (or plural) holds a repo demo, so it stays in the root scan.
-  printf '%s' "$rel" | tr '[:upper:]' '[:lower:]' | tr '/' '\n' | grep -qxE 'demos?|examples?|samples?|playgrounds?' && return 1
+  folded="$(tr '[:upper:]' '[:lower:]' <<< "$rel")"
+  case "/$folded/" in
+    */demo/*|*/demos/*|*/example/*|*/examples/*|*/sample/*|*/samples/*|*/playground/*|*/playgrounds/*) return 1 ;;
+  esac
   find "$1" -maxdepth 4 \( -type d \( -path '*/.github/hooks/storegate' -o -name Pods -o -name node_modules -o -name build \) -prune \) \
     -o \( -name 'Info.plist' -o -name 'AndroidManifest.xml' \) -print 2>/dev/null | grep . >/dev/null || return 1
   # Only a shippable app splits off. a library module or a local native module stays with the app that uses it.
