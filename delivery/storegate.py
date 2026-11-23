@@ -299,8 +299,18 @@ def snapshot(db, profile, release):
     stages.append(finding("conditions", "pass" if terms_set else "pending",
                           "価格・地域・支援購入・公開方式・初回扱いを確定してください。" if not terms_set else
                           "配信条件を登録しました。"))
-    for name, prompt in {"source": "ソース監査を実行してください。", "metadata": "掲載原稿を登録して監査してください。",
-                         **MANUAL}.items():
+    source_check = observe(db, release, "source", keys["source"], "ソース監査を実行してください。")
+    if source_check["state"] in ("pass", "blocked") and "findings" in source_check:
+        unresolved = dict.fromkeys(("critical", "high", "medium"), 0)
+        resolved = 0
+        for item in source_check["findings"]:
+            if "resolution" in item:
+                resolved += 1
+            else:
+                unresolved[item["severity"]] += 1
+        source_check["finding_counts"] = {"unresolved": unresolved, "resolved": resolved}
+    stages.append(source_check)
+    for name, prompt in {"metadata": "掲載原稿を登録して監査してください。", **MANUAL}.items():
         stages.append(observe(db, release, name, keys[name], prompt))
     if db.execute("SELECT 1 FROM evidence WHERE release=? AND name='publication'", (release["id"],)).fetchone():
         stages.append(observe(db, release, "publication", keys["publication"], "公開状況を再確認してください。"))
