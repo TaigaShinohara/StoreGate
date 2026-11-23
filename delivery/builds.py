@@ -6,10 +6,26 @@ import plistlib
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+import xml.etree.ElementTree as ET
 import zipfile
 from contextlib import contextmanager
 from pathlib import Path
+from typing import NamedTuple
+
+
+class Artifact(NamedTuple):
+    bundle: str
+    version: str
+    build: str
+    sdk: str
+    sha256: str
+    manifests: dict
+
+
+ROOT = Path(__file__).resolve().parents[1]
+ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
 
 
 def run(argv, cwd=None, timeout=120, env=None):
@@ -120,12 +136,55 @@ def build_commands(profile, target):
     raise ValueError("CI成果物のパスを登録してください。")
 
 
+def android_identity(data):
+    try:
+        manifest = ET.fromstring(data)
+    except ET.ParseError as exc:
+        raise ValueError("署名済みAABのベースマニフェストを解釈できません。") from exc
+    application = manifest.find("application")
+    sdk = manifest.find("uses-sdk")
+    level = sdk.get(ANDROID_NS + "targetSdkVersion", "") if sdk is not None else ""
+    if manifest.tag != "manifest" or application is None or not re.fullmatch(r"[0-9]{1,3}", level):
+        raise ValueError("AABのアプリ設定と対象SDKを読み取れません。")
+    if application.get(ANDROID_NS + "debuggable", "false") != "false":
+        raise ValueError("AABでデバッグが有効です。配布用ビルドを選択してください。")
+    if int(level) < 36:
+        raise ValueError(f"AABの対象SDKは {level} です。Google Play向け電話アプリはAPI 36以上が必要です。")
+    return manifest.get("package"), manifest.get(ANDROID_NS + "versionName"), manifest.get(ANDROID_NS + "versionCode"), level
+
+
+def manifest_digest(data):
+    return hashlib.sha256(plistlib.dumps(data, sort_keys=True)).hexdigest()
+
+
+def packaged_privacy_manifests(app):
+    paths = sorted(app.rglob("PrivacyInfo.xcprivacy"))
+    if not paths:
+        return {}
+    root = app.resolve()
+    if any(not path.is_file() or not path.resolve().is_relative_to(root) for path in paths):
+        raise ValueError("アプリ外を参照するか読めないPrivacy Manifestがあります。")
+    result = run([sys.executable, str(ROOT / "scripts/validate-privacy-manifest.py"), *map(str, paths)])
+    if result.returncode:
+        failures = result.stdout.decode(errors="replace").replace(str(app) + "/", "").strip()
+        raise ValueError("成果物に含まれるPrivacy Manifestを確認してください。\n" + failures)
+    return {path.relative_to(app).as_posix(): manifest_digest(plistlib.loads(path.read_bytes())) for path in paths}
+
+
+def verified_digest(path, before):
+    after = digest(path)
+    if after != before:
+        raise ValueError("検査中に成果物が変更されました。対象版を照合し直してください。")
+    return after
+
+
 def file_identity(path, target):
     if not path.exists():
         raise ValueError("署名済み成果物を登録するかビルドしてください。")
     if target["platform"] == "android":
         if path.suffix != ".aab":
             raise ValueError("Release AABを選択してください。")
+        before = digest(path)
         expected = target.get("signer_sha256", "").replace(":", "").lower()
         with zipfile.ZipFile(path) as bundle:
             if "base/manifest/AndroidManifest.xml" not in bundle.namelist():
@@ -146,16 +205,11 @@ def file_identity(path, target):
         tool = target.get("bundletool")
         if not tool:
             raise ValueError("マニフェスト検査用のbundletool JARを登録してください。")
-        import xml.etree.ElementTree as ET
-        manifest = ET.fromstring(checked(["java", "-jar", tool, "dump", "manifest", "--bundle=" + str(path), "--module=base"]))
-        ns = "{http://schemas.android.com/apk/res/android}"
-        sdk = manifest.find("uses-sdk")
-        if sdk is None or not sdk.get(ns + "targetSdkVersion"):
-            raise ValueError("AABの対象SDKを読み取れません。")
-        return (manifest.get("package"), manifest.get(ns + "versionName"),
-                manifest.get(ns + "versionCode"), sdk.get(ns + "targetSdkVersion"), digest(path))
+        manifest = checked(["java", "-jar", tool, "dump", "manifest", "--bundle=" + str(path), "--module=base"])
+        return Artifact(*android_identity(manifest), verified_digest(path, before), {})
 
     if path.is_file() and path.suffix in (".ipa", ".pkg"):
+        before = digest(path)
         # An archive alone does not prove the identity of a separately supplied export.
         with tempfile.TemporaryDirectory(prefix="storegate-export-") as temporary:
             folder = Path(temporary)
@@ -174,16 +228,18 @@ def file_identity(path, target):
                 raise ValueError("プラットフォームに対応する提出形式を選択してください。")
             if len(apps) != 1:
                 raise ValueError("書き出し内のアプリを一意に特定できません。")
-            return (*apple_app(apps[0], target), digest(path))
+            artifact = apple_app(apps[0], target, before)
+            verified_digest(path, before)
+            return artifact
     if path.suffix != ".xcarchive":
         raise ValueError("Xcodeアーカイブかストア用の書き出しを選択してください。")
     apps = list((path / "Products/Applications").glob("*.app"))
     if len(apps) != 1:
         raise ValueError("アーカイブ内のアプリを一意に特定できません。")
-    return (*apple_app(apps[0], target), tree_digest(path))
+    return apple_app(apps[0], target, tree_digest(path))
 
 
-def apple_app(app, target):
+def apple_app(app, target, sha256):
     plist = app / ("Contents/Info.plist" if target["platform"] == "macos" else "Info.plist")
     values = plistlib.loads(plist.read_bytes())
     checked(["codesign", "--verify", "--deep", "--strict", str(app)])
@@ -204,4 +260,5 @@ def apple_app(app, target):
     if any(not (app / entry).resolve().is_relative_to(app.resolve()) or not (app / entry).is_file()
            for entry in target.get("required_entries", [])):
         raise ValueError("アプリに必要な同梱ファイルがありません。")
-    return values.get("CFBundleIdentifier"), values.get("CFBundleShortVersionString"), values.get("CFBundleVersion"), sdk
+    return Artifact(values.get("CFBundleIdentifier"), values.get("CFBundleShortVersionString"),
+                    values.get("CFBundleVersion"), sdk, sha256, packaged_privacy_manifests(app))

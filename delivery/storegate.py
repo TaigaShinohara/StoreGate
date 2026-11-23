@@ -6,6 +6,7 @@ import glob
 import importlib.util
 import json
 import os
+import plistlib
 import re
 import sqlite3
 import subprocess
@@ -16,7 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from assets import PLAY_COUNTS, SLOTS, inspect_images
-from builds import build_commands, build_host, digest, file_identity, git_source, lock, run, tree_digest
+from builds import (build_commands, build_host, digest, file_identity, git_source, lock,
+                    manifest_digest, run, tree_digest)
 
 ROOT = Path(__file__).resolve().parents[1]
 STORES = {"ios": ("App Store Connect", "https://appstoreconnect.apple.com/apps"),
@@ -64,6 +66,14 @@ def fields_only(value, keys):
         raise ValueError("設定に認識できない項目があります。サンプルの項目名を確認してください。")
 
 
+def manifest_path(value):
+    if not isinstance(value, str):
+        return False
+    path = Path(value)
+    return (not path.is_absolute() and ".." not in path.parts and value == path.as_posix()
+            and path.name == "PrivacyInfo.xcprivacy")
+
+
 def profile_from(source):
     profile = json.loads(source.read_text())
     fields_only(profile, "id name repo targets")
@@ -76,7 +86,7 @@ def profile_from(source):
     if not profile["targets"] or profile["targets"].keys() - STORES.keys():
         raise ValueError("ストアの対象を登録してください。")
     for platform, target in profile["targets"].items():
-        fields_only(target, "bundle store_id provider auth_env team_id signer_sha256 build_method build_command preflight qa_command capture_command project scheme archive export_options export_path gradle_task bundletool required_entries slots locales placement_groups play_staging issuer_id transporter_key_id")
+        fields_only(target, "bundle store_id provider auth_env team_id signer_sha256 build_method build_command preflight qa_command capture_command project scheme archive export_options export_path gradle_task bundletool required_entries slots locales placement_groups play_staging issuer_id transporter_key_id privacy_manifest_sources")
         if not BUNDLE.fullmatch(target["bundle"]):
             raise ValueError("Bundle ID / applicationId を確認してください。")
         if target["build_method"] not in {"flutter", "xcode", "gradle", "ci"}:
@@ -108,6 +118,12 @@ def profile_from(source):
             token(group)
         if "play_staging" in target and type(target["play_staging"]) is not bool:
             raise ValueError("play_staging には true または false を指定してください。")
+        mapping = target.get("privacy_manifest_sources", {})
+        if not isinstance(mapping, dict) or (
+            mapping and (platform != "ios" or any(not manifest_path(path) for path in (*mapping.keys(), *mapping.values()))
+                         or len(set(mapping.values())) != len(mapping))
+        ):
+            raise ValueError("iOSのソースと同梱Privacy Manifestの相対パスを確認してください。")
         target["platform"] = platform
     return profile
 
@@ -230,8 +246,11 @@ def contexts(profile, target, release, source, images, artifact):
         "scripts/deadline-checker.py", "data/regulatory-deadlines.json"
     )]
     listing_rules = digest(ROOT / "scripts/metadata-audit.py")
+    source_rules = [identity, profile["repo"], source, guard_rules]
+    if target.get("privacy_manifest_sources"):
+        source_rules.extend([target["privacy_manifest_sources"], artifact_digest])
     return {name: fingerprint(value) for name, value in {
-        "source": [identity, profile["repo"], source, guard_rules],
+        "source": source_rules,
         "build_preflight": [identity, source, target.get("preflight")],
         "metadata": [identity, listing, target["locales"], listing_rules],
         "account": store,
@@ -248,10 +267,13 @@ def artifact_status(target, release):
     if not release.get("artifact"):
         return finding("artifact", "pending", "署名済み成果物を登録するかビルドしてください。")
     try:
-        bundle, version, build, sdk, sha = file_identity(Path(release["artifact"]), target)
-        if (bundle, version, build) != (target["bundle"], release["version"], release["build"]):
+        path = Path(release["artifact"])
+        artifact = file_identity(path, target)
+        if (artifact.bundle, artifact.version, artifact.build) != (target["bundle"], release["version"], release["build"]):
             raise ValueError("成果物のアプリID・版・ビルド番号が案件と一致しません。")
-        return finding("artifact", "pass", "成果物の識別情報と署名を照合しました。", sdk=sdk, sha256=sha)
+        manifests = {"privacy_manifests": artifact.manifests} if artifact.manifests else {}
+        return finding("artifact", "pass", "成果物の識別情報と署名を照合しました。",
+                       sdk=artifact.sdk, sha256=artifact.sha256, format=path.suffix, **manifests)
     except (ValueError, OSError, zipfile.BadZipFile, subprocess.TimeoutExpired) as exc:
         message = str(exc) if type(exc) is ValueError else "成果物または検査ツールを確認してください。"
         return finding("artifact", "blocked", message)
@@ -308,14 +330,41 @@ def expand(argv, release):
     return [re.sub(r"\{(version|build|artifact|pack)\}", lambda match: values[match[1]], arg) for arg in argv]
 
 
-def guard_result(report, code, platform):
+def privacy_corrections(repo, target, artifact):
+    if target["platform"] != "ios" or artifact["state"] != "pass" or artifact.get("format") != ".ipa":
+        return {}
+    root = Path(repo).resolve()
+    packaged = artifact.get("privacy_manifests", {})
+    corrections = {}
+    for raw, resource in target.get("privacy_manifest_sources", {}).items():
+        source = root / raw
+        if not source.resolve().is_relative_to(root) or not packaged.get(resource):
+            continue
+        try:
+            plist = plistlib.loads(source.read_bytes())
+            if not isinstance(plist, dict) or plist.get("NSPrivacyAccessedAPITypes") != []:
+                continue
+            del plist["NSPrivacyAccessedAPITypes"]
+            if manifest_digest(plist) == packaged[resource]:
+                corrections[str(source)] = {"packaged_manifest": resource, "artifact_sha256": artifact["sha256"]}
+        except (OSError, ValueError, TypeError):
+            continue
+    return corrections
+
+
+def guard_result(report, code, platform, corrections=None):
     # Use the Fleet Sweep parser so deadlines and findings keep the same meaning in both workflows.
     spec = importlib.util.spec_from_file_location("storegate_fleet", ROOT / "scripts/fleet-sweep.py")
     fleet = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(fleet)
     findings, summaries, coverages = fleet.parse_report(report)
     problem = fleet.integrity_problem(code, findings, summaries, coverages)
-    if any(item["severity"] in {"critical", "high"} for item in findings):
+    if platform == "ios" and not problem and corrections:
+        for item in findings:
+            file, marker, _ = item["title"].partition(": NSPrivacyAccessedAPITypes is an empty array.")
+            if marker and item["id"] == "APPLE-MANIFEST-API-TYPES-EMPTY" and file in corrections:
+                item["resolution"] = corrections[file]
+    if any(item["severity"] in {"critical", "high"} and "resolution" not in item for item in findings):
         return "blocked", findings
     if problem:
         return "not_checked", findings
@@ -326,7 +375,7 @@ def guard_result(report, code, platform):
 
 def audit(db, profile, release):
     target = profile["targets"][release["platform"]]
-    _, keys = snapshot(db, profile, release)
+    state, keys = snapshot(db, profile, release)
     if target.get("preflight"):
         result = run(expand(target["preflight"], release), profile["repo"])
         message = ("アプリの配布設定を検査しました。" if not result.returncode else
@@ -340,7 +389,12 @@ def audit(db, profile, release):
     lines = [line for line in guard.stdout.decode(errors="replace").strip().splitlines() if line]
     # The standalone guard is advisory and can return zero with incomplete evidence.
     text = "\n".join(lines)
-    result, findings = guard_result(text, guard.returncode, release["platform"])
+    artifact = next(item for item in state["checks"] if item["name"] == "artifact")
+    corrections = privacy_corrections(profile["repo"], target, artifact)
+    result, findings = guard_result(text, guard.returncode, release["platform"], corrections)
+    resolved_count = sum("resolution" in item for item in findings)
+    if resolved_count:
+        text = f"署名済みIPAでPrivacy Manifestの修正を {resolved_count} 件確認しました。\n" + text
     record(db, release, "source", keys["source"], result,
            {"message": text or "ガードの実行結果を確認してください。", "findings": findings})
     if release.get("metadata"):

@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import hashlib
 import json
 from pathlib import Path
+import plistlib
 import struct
 import subprocess
 import tempfile
@@ -11,8 +12,9 @@ from unittest.mock import Mock, patch
 import zlib
 
 from assets import inspect_images
-from builds import lock
-from storegate import ROOT, database, dispatch_store, execute, guard_result, import_qa, migrate, save_config
+from builds import android_identity, lock, packaged_privacy_manifests
+from storegate import (ROOT, contexts, database, dispatch_store, execute, guard_result, import_qa, migrate,
+                       privacy_corrections, save_config)
 from stores import Apple, Google, StoreError
 
 
@@ -72,7 +74,7 @@ class DeliveryTests(unittest.TestCase):
             path = folder / "app.lock"
             with lock(path):
                 result = subprocess.run(
-                    ["python3", "-c", f"from builds import lock; lock({str(path)!r}).__enter__()"],
+                    ["python3", "-c", f"from builds import android_identity, lock, packaged_privacy_manifests; lock({str(path)!r}).__enter__()"],
                     cwd=Path(__file__).parent, capture_output=True, text=True)
                 self.assertIn("同じ操作が実行中です", result.stderr)
             with lock(path):
@@ -186,6 +188,64 @@ class DeliveryTests(unittest.TestCase):
         state, findings = guard_result(report, 0, "ios")
         self.assertEqual(state, "blocked")
         self.assertEqual([item["id"] for item in findings], ["APPLE-EXAMPLE"])
+
+    def test_aab_effective_sdk_and_debuggability(self):
+        manifest = """<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+            package="org.example.app" android:versionName="1.0.0" android:versionCode="3">
+            <uses-sdk android:targetSdkVersion="{sdk}" />
+            <application android:debuggable="{debug}" />
+        </manifest>"""
+        identity = android_identity(manifest.format(sdk="36", debug="false"))
+        self.assertEqual(identity, ("org.example.app", "1.0.0", "3", "36"))
+        with self.assertRaisesRegex(ValueError, "API 36"):
+            android_identity(manifest.format(sdk="35", debug="false"))
+        with self.assertRaisesRegex(ValueError, "デバッグ"):
+            android_identity(manifest.format(sdk="36", debug="true"))
+        with self.assertRaisesRegex(ValueError, "対象SDK"):
+            android_identity(manifest.format(sdk="VanillaIceCream", debug="false"))
+
+    def test_packaged_privacy_checks_and_reconciles_only_exact_source_finding(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve()
+            app = root / "Payload/Fixture.app"
+            resource = "plugin.bundle/PrivacyInfo.xcprivacy"
+            packaged = app / resource
+            packaged.parent.mkdir(parents=True)
+            original = {"NSPrivacyAccessedAPITypes": [], "NSPrivacyTracking": False}
+            packaged.write_bytes(plistlib.dumps(original))
+            with self.assertRaisesRegex(ValueError, "APPLE-MANIFEST-API-TYPES-EMPTY"):
+                packaged_privacy_manifests(app)
+            packaged.write_bytes(plistlib.dumps({"NSPrivacyTracking": False}, fmt=plistlib.FMT_BINARY))
+
+            source = root / "plugin/PrivacyInfo.xcprivacy"
+            source.parent.mkdir()
+            source.write_bytes(plistlib.dumps(original))
+            target = {"platform": "ios", "bundle": "org.example.app", "locales": ["ja"],
+                      "privacy_manifest_sources": {"plugin/PrivacyInfo.xcprivacy": resource}}
+            artifact = {"state": "pass", "format": ".ipa", "sha256": "sha-one",
+                        "privacy_manifests": packaged_privacy_manifests(app)}
+            corrections = privacy_corrections(root, target, artifact)
+            self.assertEqual(corrections[str(source)]["packaged_manifest"], resource)
+            coverage = "Coverage. complete ios=1 android=0 web=0"
+            finding = f"  [CRITICAL] APPLE-MANIFEST-API-TYPES-EMPTY  {source}: NSPrivacyAccessedAPITypes is an empty array."
+            report = "\n".join((finding, "Summary. critical=1 high=0 medium=0", coverage))
+            state, findings = guard_result(report, 2, "ios", corrections)
+            self.assertEqual(state, "pass")
+            self.assertEqual(findings[0]["resolution"]["artifact_sha256"], "sha-one")
+            self.assertEqual(guard_result(report, 2, "ios")[0], "blocked")
+            more_findings = "\n".join((finding, "  [HIGH] APPLE-EXAMPLE  Other issue",
+                                       "Summary. critical=1 high=1 medium=0", coverage))
+            self.assertEqual(guard_result(more_findings, 2, "ios", corrections)[0], "blocked")
+            self.assertEqual(guard_result(report, 1, "ios", corrections)[0], "blocked")
+            self.assertEqual(privacy_corrections(root, target, {**artifact, "format": ".xcarchive"}), {})
+            self.assertEqual(privacy_corrections(root, target, {**artifact, "state": "blocked"}), {})
+            self.assertEqual(privacy_corrections(root, target, {**artifact, "privacy_manifests": {}}), {})
+            self.assertEqual(privacy_corrections(root, target, {**artifact, "privacy_manifests": {resource: "different"}}), {})
+
+            release = {"version": "1.0.0", "build": "3", "track": "production"}
+            before = contexts({"repo": str(root)}, target, release, "src", [], artifact)
+            after = contexts({"repo": str(root)}, target, release, "src", [], {**artifact, "sha256": "sha-two"})
+            self.assertNotEqual(before["source"], after["source"])
 
     def test_ci_report_must_be_for_the_signed_artifact(self):
         with self.workspace() as (folder, db):
