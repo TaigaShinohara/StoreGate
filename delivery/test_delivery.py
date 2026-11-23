@@ -7,12 +7,12 @@ import struct
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import zlib
 
 from assets import inspect_images
 from builds import lock
-from storegate import database, dispatch_store, execute, migrate, save_config
+from storegate import ROOT, database, dispatch_store, execute, guard_result, import_qa, migrate, save_config
 from stores import Apple, Google, StoreError
 
 
@@ -117,6 +117,52 @@ class DeliveryTests(unittest.TestCase):
             dispatch_store(db, release, "store-status", adapter, state)
             self.assertEqual(db.execute("SELECT state FROM operations").fetchone()["state"], "received")
             self.assertEqual(adapter.calls, 1)
+
+    def test_explicit_flutter_android_scope_skips_native_apple_directories(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "pubspec.yaml").write_text("name: fixture")
+            (root / "android/app/src/main").mkdir(parents=True)
+            (root / "android/app/src/main/AndroidManifest.xml").write_text("<manifest><application/></manifest>")
+            (root / "patches/fixture/macos").mkdir(parents=True)
+            (root / "patches/fixture/macos/Fixture.swift").write_text('let optOut = "call us to cancel"')
+            (root / "lib").mkdir()
+            (root / "lib/config.dart").write_text('const policy = "https://fixture.invalid/privacy";')
+            guard = ROOT / "agent-os/hooks/storegate-guard.sh"
+            output = subprocess.run(["bash", str(guard), str(root), "--platform", "android"],
+                                    capture_output=True, text=True, timeout=60)
+            _, findings = guard_result(output.stdout, output.returncode, "android")
+            self.assertIn("ios=0 android=1", output.stdout)
+            self.assertFalse(any(finding["id"] == "BOTH-SUBSCRIPTION-HARD-CANCEL" for finding in findings))
+
+    def test_real_high_findings_block_but_regulatory_deadlines_do_not(self):
+        coverage = "Coverage. complete ios=1 android=0 web=0"
+        deadline = "[HIGH] in 20 days. A deadline notice."
+        clean = "\n".join((deadline, "Summary. critical=0 high=0 medium=0", coverage))
+        self.assertEqual(guard_result(clean, 0, "ios"), ("pass", []))
+        self.assertEqual(guard_result(clean, 0, "android"), ("not_checked", []))
+        report = "\n".join(("  [HIGH]     APPLE-EXAMPLE  App finding", deadline,
+                            "Summary. critical=0 high=1 medium=0", coverage))
+        state, findings = guard_result(report, 0, "ios")
+        self.assertEqual(state, "blocked")
+        self.assertEqual([item["id"] for item in findings], ["APPLE-EXAMPLE"])
+
+    def test_ci_report_must_be_for_the_signed_artifact(self):
+        with self.workspace() as (folder, db):
+            release = {"id": "fixture"}
+            save_config(db, "releases", release)
+            receipt = folder / "qa.json"
+            receipt.write_text(json.dumps({"artifact_sha256": "wrong", "suite": "smoke", "run": "CI 123", "outcome": "pass"}))
+            state = {"checks": [{"name": "artifact", "state": "pass", "sha256": "expected"}]}
+            with patch("storegate.snapshot", return_value=(state, {"qa": "qa-context"})):
+                with self.assertRaisesRegex(ValueError, "一致しません"):
+                    import_qa(db, {}, release, receipt)
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM evidence").fetchone()[0], 0)
+                receipt.write_text(receipt.read_text().replace("wrong", "expected"))
+                import_qa(db, {}, release, receipt)
+                result = db.execute("SELECT state,digest,data FROM evidence").fetchone()
+                self.assertEqual((result["state"], result["digest"]), ("pass", "qa-context"))
+                self.assertEqual(json.loads(result["data"])["kind"], "ci")
 
     def test_apple_refuses_draft_with_another_version(self):
         client = Mock()

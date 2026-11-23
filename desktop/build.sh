@@ -54,7 +54,7 @@ case "${1:-}" in
     cp "$repo/agent-os/hooks/storegate-guard.sh" "$resources/agent-os/hooks/"
     cp "$repo/scripts/metadata-audit.py" "$repo/scripts/ruling-register.py" \
       "$repo/scripts/macos-source-audit.py" "$repo/scripts/validate-privacy-manifest.py" \
-      "$repo/scripts/android-target-sdk.py" "$resources/scripts/"
+      "$repo/scripts/android-target-sdk.py" "$repo/scripts/fleet-sweep.py" "$resources/scripts/"
     xcrun xcstringstool compile "$here/Resources/Audit.xcstrings" --output-directory "$bundle/Contents/Resources"
     cp "$repo/data/rejection-patterns.json" "$repo/data/ruling-register.json" "$resources/data/"
     cp "$repo/LICENSE" "$repo/NOTICE" "$resources/"
