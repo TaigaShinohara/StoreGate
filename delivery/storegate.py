@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from assets import SLOTS, inspect_images
-from builds import build_commands, build_host, file_identity, git_source, lock, run, tree_digest
+from builds import build_commands, build_host, digest, file_identity, git_source, lock, run, tree_digest
 
 ROOT = Path(__file__).resolve().parents[1]
 STORES = {"ios": ("App Store Connect", "https://appstoreconnect.apple.com/apps"),
@@ -222,18 +222,20 @@ def contexts(profile, target, release, source, images, artifact):
     assets = [{key: value for key, value in image.items() if key != "path"} for image in images]
     terms = [release.get(key) for key in ("regions", "price", "purchases", "publication", "first")]
     artifact_digest = artifact.get("sha256")
-    audit_rules = [tree_digest(ROOT / "data"),
-                   hashlib.sha256((ROOT / "scripts/fleet-sweep.py").read_bytes()).hexdigest(),
-                   hashlib.sha256((ROOT / "agent-os/hooks/storegate-guard.sh").read_bytes()).hexdigest(),
-                   hashlib.sha256((ROOT / "scripts/metadata-audit.py").read_bytes()).hexdigest()]
+    guard_rules = [digest(ROOT / name) for name in (
+        "agent-os/hooks/storegate-guard.sh", "scripts/fleet-sweep.py", "scripts/macos-source-audit.py",
+        "scripts/android-target-sdk.py", "scripts/validate-privacy-manifest.py",
+        "scripts/deadline-checker.py", "data/regulatory-deadlines.json"
+    )]
+    listing_rules = digest(ROOT / "scripts/metadata-audit.py")
     return {name: fingerprint(value) for name, value in {
-        "source": [identity, profile["repo"], source, audit_rules],
+        "source": [identity, profile["repo"], source, guard_rules],
         "build_preflight": [identity, source, target.get("preflight")],
-        "metadata": [identity, listing, target["locales"], audit_rules],
+        "metadata": [identity, listing, target["locales"], listing_rules],
         "account": store,
         "device": [identity, artifact_digest],
         "declarations": [store, source, artifact_digest, terms],
-        "checklist": [store, source, artifact_digest, assets, listing, terms, audit_rules],
+        "checklist": [store, source, artifact_digest, assets, listing, terms, guard_rules, listing_rules],
         "storefront": [store, artifact_digest, assets, listing, terms],
         "qa": [identity, artifact_digest, target.get("qa_command")],
         "publication": [store, terms],
@@ -615,7 +617,6 @@ def execute(folder, db, args):
             remote = adapter.status(release)
             if remote["state"] != "PREPARE_FOR_SUBMISSION":
                 raise ValueError("App Store Connectで対象版の編集可能な下書きを確認してください。")
-            from builds import digest
             sha = next(item["sha256"] for item in state["checks"] if item["name"] == "artifact")
             known = history(db, release, "upload-build")
             if known and known[0]["digest"] != sha:
@@ -656,21 +657,21 @@ def execute(folder, db, args):
                             "metadata": release["metadata"], "remote": adapter.status(release)}
                 require_ready(state, {"device", "declarations", "checklist", "storefront", "qa", "publication"})
                 artifact = next(item["sha256"] for item in state["checks"] if item["name"] == "artifact")
-                digest = fingerprint([target, keys, artifact])
+                edit_key = fingerprint([target, keys, artifact])
                 prior = history(db, release, "play-edit")
-                if prior and (prior[0]["state"] == "opening" or prior[0]["digest"] != digest):
+                if prior and (prior[0]["state"] == "opening" or prior[0]["digest"] != edit_key):
                     raise ValueError("既存の編集中のPlay変更を、公式画面と照合してください。")
                 if prior:
                     edit = json.loads(prior[0]["data"])["edit"]
                 else:
                     adapter.status(release)
-                    save_operation(db, release, "play-edit", digest, "opening", {})
+                    save_operation(db, release, "play-edit", edit_key, "opening", {})
                     edit = adapter.new_edit()
                     if not isinstance(edit, str) or not re.fullmatch(r"[a-zA-Z0-9_-]+", edit):
                         raise ValueError("Playが返した編集IDを確認できません。")
-                    save_operation(db, release, "play-edit", digest, "open", {"edit": edit})
+                    save_operation(db, release, "play-edit", edit_key, "open", {"edit": edit})
                 result = adapter.stage_edit(edit, release, state["images"], target["locales"], artifact)
-                save_operation(db, release, "play-edit", digest, "validated", {"edit": edit})
+                save_operation(db, release, "play-edit", edit_key, "validated", {"edit": edit})
                 return result
             return adapter.sync_draft(release, state["images"])
         if command == "review-draft":
