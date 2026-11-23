@@ -617,6 +617,34 @@ OUT="$(bash "$GUARD" "$D" 2>&1)"
 echo "$OUT" | grep -q 'ANDROID-USER-DATA-DISCLOSURE' && ok "#542 fixture B: READ_CONTACTS without disclosure fires" || bad "#542 fixture B: READ_CONTACTS without disclosure fires"
 rm -rf "$D"
 
+# Removal markers, comments, and code references are not permission declarations.
+D="$(mk_android_perm '')"
+cat > "$D/android/app/src/main/AndroidManifest.xml" <<'XML'
+<manifest xmlns:a="http://schemas.android.com/apk/res/android" xmlns:t="http://schemas.android.com/tools">
+  <uses-permission a:name="android.permission.MANAGE_EXTERNAL_STORAGE" t:node="remove"/>
+  <uses-permission a:name="android.permission.READ_CONTACTS" t:node="removeAll"/>
+  <!-- <uses-permission a:name="android.permission.WRITE_CONTACTS"/> -->
+</manifest>
+XML
+printf '// Avoid MANAGE_EXTERNAL_STORAGE on Android.\n' > "$D/Storage.kt"
+OUT="$(bash "$GUARD" "$D" --platform android 2>&1)"
+echo "$OUT" | grep -Eq 'GOOGLE-PERM-ALL-FILES|ANDROID-USER-DATA-DISCLOSURE' && bad "Removal markers and references are not permission grants" || ok "Removal markers and references are not permission grants"
+
+mkdir -p "$D/android/app/src/release"
+cat > "$D/android/app/src/release/AndroidManifest.xml" <<'XML'
+<manifest xmlns:a="http://schemas.android.com/apk/res/android">
+  <uses-permission-sdk-23
+      a:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
+</manifest>
+XML
+OUT="$(bash "$GUARD" "$D" --platform android 2>&1)"
+for id in GOOGLE-PERM-ALL-FILES ANDROID-USER-DATA-DISCLOSURE; do
+  echo "$OUT" | grep -A1 "$id" | grep -q '^      file\. android/app/src/release/AndroidManifest\.xml:2$' \
+    && ok "$id cites the actual permission declaration in the release manifest" \
+    || bad "$id cites the actual permission declaration in the release manifest"
+done
+rm -rf "$D"
+
 # 56 #542. Bundled web output under dist/ is a build artifact, not source.
 D="$(mktemp -d)"; mkdir -p "$D/App" "$D/web/dist/assets"
 printf '<plist/>' > "$D/App/Info.plist"

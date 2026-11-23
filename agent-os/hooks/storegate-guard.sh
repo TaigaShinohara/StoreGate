@@ -504,6 +504,47 @@ manifest_has() {  # 0 if regex found in any AndroidManifest.xml in the source li
   [ -n "$out" ]
 }
 
+# Read concrete declarations. A removal marker never grants a permission, and
+# declarations in another manifest still need a merged-release check.
+android_permission_rows() {
+  python3 - "$FILELIST" "$DIR" <<'PY'
+import sys
+from pathlib import Path
+from xml.parsers import expat
+
+filelist, root = map(Path, sys.argv[1:])
+android_name = 'http://schemas.android.com/apk/res/android name'
+tools_node = 'http://schemas.android.com/tools node'
+for line in filelist.read_text().splitlines():
+    path = Path(line)
+    if path.name != 'AndroidManifest.xml':
+        continue
+    parents = []
+    parser = expat.ParserCreate(namespace_separator=' ')
+
+    def start(name, attrs):
+        if (parents == ['manifest'] and name in ('uses-permission', 'uses-permission-sdk-23')
+                and android_name in attrs and attrs.get(tools_node) not in ('remove', 'removeAll')):
+            print(f'{attrs[android_name]}\t{path.relative_to(root)}:{parser.CurrentLineNumber}')
+        parents.append(name)
+
+    parser.StartElementHandler = start
+    parser.EndElementHandler = lambda _: parents.pop()
+    with path.open('rb') as manifest:
+        parser.ParseFile(manifest)
+PY
+}
+
+android_permission_location() {
+  if [ "$ANDROID_PERMISSIONS_PARSED" -eq 1 ]; then
+    PERMISSION_PATTERN="^($1)$" awk -F '\t' '!found && $1 ~ ENVIRON["PERMISSION_PATTERN"] { print $2; found=1 }' \
+      <<< "$ANDROID_PERMISSION_ROWS"
+  else
+    # Preserve the conservative manifest signal when the XML cannot be read.
+    hit_file manifest "$1"
+  fi
+}
+
 # Where a purpose string can live. Info.plist and its strings, build settings, XcodeGen, Expo config.
 CONFIG_FILES_RE='(\.plist|\.pbxproj|\.xcconfig|\.ya?ml|/project\.json|/config\.xml|/Project\.swift|/Tuist/.*\.swift|\.csproj|/app\.json|/app\.config\.[cm]?[jt]s)$'
 config_has() {  # 0 if regex found in a config file, never in Swift or Kotlin source or a comment there
@@ -1175,11 +1216,18 @@ fi
 
 # ===== Android checks =====
 if [ "$IS_AND" -eq 1 ]; then
+  ANDROID_PERMISSIONS_PARSED=0
+  if ANDROID_PERMISSION_ROWS="$(android_permission_rows 2>/dev/null)"; then
+    ANDROID_PERMISSIONS_PARSED=1
+  else
+    mark_incomplete "Android permission declarations could not be parsed; inspect the merged release manifest"
+  fi
   if grep_has 'ACCESS_BACKGROUND_LOCATION'; then
     finding critical "GOOGLE-PERM-BACKGROUND-LOCATION" "Background location permission declared" "Justify with a core feature and prominent disclosure, or use foreground location." src 'ACCESS_BACKGROUND_LOCATION'
   fi
-  if grep_has 'MANAGE_EXTERNAL_STORAGE'; then
-    finding critical "GOOGLE-PERM-ALL-FILES" "All files access declared" "Use scoped storage. Request all files access only for a qualifying use case." src 'MANAGE_EXTERNAL_STORAGE'
+  ALL_FILES_LOCATION="$(android_permission_location 'android[.]permission[.]MANAGE_EXTERNAL_STORAGE')"
+  if [ -n "$ALL_FILES_LOCATION" ]; then
+    finding critical "GOOGLE-PERM-ALL-FILES" "All files access declared" "Use scoped storage. Request all files access only for a qualifying use case." path "$ALL_FILES_LOCATION"
   fi
   if grep_has 'android\.permission\.(READ_SMS|SEND_SMS|RECEIVE_SMS|READ_CALL_LOG|WRITE_CALL_LOG)'; then
     finding critical "GOOGLE-PERM-SMS-CALLLOG" "SMS or Call Log permission declared" "Use the permissions declaration for an approved core use case, or drop it." src 'android\.permission\.(READ_SMS|SEND_SMS|RECEIVE_SMS|READ_CALL_LOG|WRITE_CALL_LOG)'
@@ -1529,10 +1577,11 @@ ABIPY
     fi
   fi
   # Declared permissions in AndroidManifest.xml, the surface Play enforces on (#542). English words matched prose,
-  # and bare API symbols match imports, comments and vendored SDKs. READ_MEDIA_* has its own check below.
-  if manifest_has 'android\.permission\.(READ_CONTACTS|WRITE_CONTACTS|READ_SMS|SEND_SMS|RECEIVE_SMS|READ_CALL_LOG|WRITE_CALL_LOG|GET_ACCOUNTS|MANAGE_EXTERNAL_STORAGE)'; then
+  # and bare API symbols match imports, comments and vendored SDKs. READ_MEDIA_* has its own check above.
+  DISCLOSURE_LOCATION="$(android_permission_location 'android[.]permission[.](READ_CONTACTS|WRITE_CONTACTS|READ_SMS|SEND_SMS|RECEIVE_SMS|READ_CALL_LOG|WRITE_CALL_LOG|GET_ACCOUNTS|MANAGE_EXTERNAL_STORAGE)')"
+  if [ -n "$DISCLOSURE_LOCATION" ]; then
     if ! grep_has 'prominent disclosure|user consent|privacy consent|accept policy|[Pp]rominentDisclosure|[Dd]isclosureDialog|[Cc]onsentDialog|showDisclosure|requestConsent'; then
-      finding critical "ANDROID-USER-DATA-DISCLOSURE" "Missing prominent disclosure for sensitive user data" "Provide a prominent in-app disclosure before collecting sensitive personal data, and obtain explicit user consent." manifest 'android\.permission\.(READ_CONTACTS|WRITE_CONTACTS|READ_SMS|SEND_SMS|RECEIVE_SMS|READ_CALL_LOG|WRITE_CALL_LOG|GET_ACCOUNTS|MANAGE_EXTERNAL_STORAGE)'
+      finding critical "ANDROID-USER-DATA-DISCLOSURE" "Missing prominent disclosure for sensitive user data" "Provide a prominent in-app disclosure before collecting sensitive personal data, and obtain explicit user consent." path "$DISCLOSURE_LOCATION"
     fi
   fi
   if grep_has 'com\.google\.android\.gms\.permission\.AD_ID|AD_ID|getAdvertisingIdInfo'; then
