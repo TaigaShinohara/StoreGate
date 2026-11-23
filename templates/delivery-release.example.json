@@ -1,0 +1,15 @@
+{
+  "app": "example",
+  "platform": "ios",
+  "version": "1.0.0",
+  "build": "1",
+  "track": "production",
+  "pack": "../example-store-pack",
+  "metadata": "../example-metadata",
+  "artifact_pattern": "../example-app/build/ios/ipa/*.ipa",
+  "regions": ["JP"],
+  "price": "free",
+  "purchases": false,
+  "publication": "manual",
+  "first": true
+}

@@ -97,7 +97,8 @@ struct StoreGateApp: App {
 
     var body: some Scene {
         WindowGroup("StoreGate") {
-            StoreGateEntry(delivery: delivery, sample: sample, onboarding: onboarding)
+            StoreGateEntry(delivery: delivery, sample: sample, onboarding: onboarding,
+                           workspace: Self.workspaceFile().deletingLastPathComponent())
                 .frame(minWidth: 820, minHeight: 580)
                 .tint(.storeGate)
                 .onAppear { applicationDelegate.store = delivery }
@@ -138,8 +139,11 @@ private struct StoreGateEntry: View {
     @State private var showingSample = false
     @State private var showingOnboarding: Bool
     @State private var startNewProject = false
+    @State private var showingShared = true
+    let workspace: URL
 
-    init(delivery: DeliveryStore, sample: ReleaseStore, onboarding: OnboardingStore) {
+    init(delivery: DeliveryStore, sample: ReleaseStore, onboarding: OnboardingStore, workspace: URL) {
+        self.workspace = workspace
         self.delivery = delivery
         self.sample = sample
         self.onboarding = onboarding
@@ -154,6 +158,7 @@ private struct StoreGateEntry: View {
                 OnboardingView(store: onboarding) { destination in
                     showingOnboarding = false
                     startNewProject = destination == .createProject
+                    showingShared = !startNewProject
                 }
             } else if showingSample {
                 VStack(spacing: 0) {
@@ -167,6 +172,9 @@ private struct StoreGateEntry: View {
                     Divider()
                     ReleaseWindow(store: sample)
                 }
+            } else if showingShared {
+                SharedDeliveryView(workspace: workspace, openMac: { showingShared = false })
+                    .toolbar { Button("Mac App Storeの従来の案件") { showingShared = false } }
             } else {
                 WorkspaceShell(store: delivery, openSample: { showingSample = true },
                                openOnboarding: { openGuide(at: .welcome) },
@@ -174,6 +182,7 @@ private struct StoreGateEntry: View {
                                onboardingFocus: onboarding.state.focus,
                                hasPracticed: onboarding.state.hasPracticed,
                                startNewProject: $startNewProject)
+                    .toolbar { Button("配信案件一覧") { showingShared = true } }
             }
         }
     }

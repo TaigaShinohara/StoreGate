@@ -20,7 +20,7 @@ bash desktop/build.sh --test
 
 保存が競合した場合は「保存を再試行」で別案件への変更を反映できます。同じ案件で競合した場合は「変更を控えに保存して読み直す」で未保存の内容を別のJSONファイルに残し、最新の案件を開けます。アップロード後に別のアーカイブを使う場合は、Xcodeでビルド番号を更新してから再照合します。
 
-StoreGateはコードや掲載素材をストアへ送信しません。App Store Connectで行ったアップロード・審査・公開の結果は本人が記録します。ローカルの検査結果と、本人による申告・実機・ストア照合を画面で区別します。
+従来のMac案件画面では、App Store Connectで行ったアップロード・審査・公開の結果を本人が記録します。ローカルの検査結果と、本人による申告・実機・ストア照合を画面で区別します。
 
 提出前には、ソース監査とアーカイブの保存済み結果が変わっていないことを再照合します。ソースの変更、基本情報の訂正、監査エンジンの更新に応じて再確認が必要です。古い保存データの掲載監査には一度再検査が必要です。審査中・公開済みの当時の確認履歴は、翌日や監査エンジン更新後も完了記録として保持します。
 
@@ -31,3 +31,22 @@ Macソース監査は `python3 scripts/macos-source-audit.py "/path/to/mac-app"`
 「適用ルールと実機」はソース監査・適用ルール・手動確認、「掲載情報と審査メモ」は掲載原稿・審査メモ・ストアとの照合を切り替えて使います。補助情報と保存済みの記録は見出しから開けます。[画面の情報整理と検証記録](INFORMATION-DESIGN.md)に比較結果と未確認の範囲を記載しています。
 
 案件のない初回起動では、希望の選択、3ステップの使い方、試し操作を順に案内します。スキップや「あとで試す」で通常画面へ進めます。案件一覧の「使い方」から全体の再表示と試し操作を選べます。進み具合は案件とは別の `onboarding-state.json` に保存します。[オンボーディングのページ地図と検証記録](ONBOARDING.md)を参照してください。
+
+## 複数アプリの配信案件
+
+起動後の「配信案件」から、既存アプリと対象版の設定を登録できます。GUIとCLIは同じSQLiteを使います。保存先は既定で `~/Library/Application Support/StoreGate/delivery.sqlite3` です。検証時は `STOREGATE_WORKSPACE_DIR` で別フォルダを指定できます。従来のMac案件は初回表示で既存JSONの履歴を取り込み、元の案件画面は「Mac App Storeの従来の案件」から開けます。
+
+[プロファイルの例](../templates/delivery-profile.example.json)と[版の設定例](../templates/delivery-release.example.json)をローカルにコピーし、アプリに合わせて編集してください。設定内のパスは設定ファイルからの相対パスまたは絶対パスです。ビルドコマンド内のプロジェクト相対パスはリポジトリが基準です。ビルド、QA、再撮影のコマンドには、実行内容を確認したアプリの手順を登録してください。トークンや鍵は設定に入れず、`auth_env` に認証ランナーが発行する環境変数の名前を設定します。
+
+```bash
+python3 delivery/storegate.py register /path/to/profile.json
+python3 delivery/storegate.py release /path/to/release.json
+python3 delivery/storegate.py prepare example/ios/1.0.0/1/production
+python3 delivery/storegate.py status example/ios/1.0.0/1/production
+```
+
+- `prepare` はポリシーガードと原稿の監査、素材・成果物の照合を実行します。IDの省略時は登録済みの各版を監査します。原稿は既存のmetadata-auditと同じディレクトリ形式です。撮影済みパックの画像は `07_submission/image-manifest.json` を使い、端末枠・言語・順序と実寸・形式・ハッシュを照合します。
+- `build` はFlutterの登録済みコマンド、Xcodeのアーカイブと書き出し、またはGradleのRelease AABを実行します。Xcodeには `project`、`scheme`、`archive`、`export_options`、`export_path` が必要です。Androidには `bundletool` とアップロード証明書の `signer_sha256`、Appleには `team_id` が必要です。既存成果物は版の設定の `artifact` で登録できます。
+- `draft` はAppleの編集可能な版に画像と原稿を配置し、読み戻します。プロファイルの `placement_groups` に、画像の端末枠とAppleの現行Asset Libraryの配置グループの対応を指定します。Appleのアプリ登録と版・掲載言語の作成はApp Store Connectで行います。
+- Appleの `upload-build` は書き出したIPA・PKGをTransporterで投入し、処理後の再実行で対象ビルドの紐づけと読み戻しを行います。プロファイルにチームの `issuer_id`、`transporter_key_id`、プロバイダの短縮名を設定し、既存の認証ランナーから利用します。Google Playは対象トラックのversionCodeを照会します。テストトラックに限り、書き込み権限を確認してプロファイルで `play_staging` を有効にすると、編集中のAAB・画像・掲載情報を検証できます。編集を確定する場合は、Play Consoleで審査・公開への影響を確認してください。
+- `submit` と `publish` は操作の確認内容をJSONで返します。Appleで実行する場合は最新の内容を確認し、`--approve` に返された確認値を渡します。確認値は対象版の成果物・掲載内容・配信条件・ストアの状態に紐づきます。Google PlayはPublishing overviewで審査と公開を操作し、`store-status` で照会します。公開後は `attest <ID> publication --region JP --note <確認根拠>` で予定地域の入手確認を記録できます。

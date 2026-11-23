@@ -48,8 +48,15 @@ trap cleanup EXIT
 DIR=""
 STDIN_JSON=""
 CMD=""
+STANDALONE_TARGET=""
 if [ "$#" -ge 1 ] && [ -d "$1" ]; then
   DIR="$1"                                   # standalone with explicit path
+  if [ "${2:-}" = "--platform" ]; then
+    case "${3:-}" in
+      ios|android|macos) STANDALONE_TARGET="$3" ;;
+      *) echo "Select ios, android or macos for --platform." >&2; exit 1 ;;
+    esac
+  fi
 elif [ "$#" -ge 1 ] && [ ! -d "$1" ]; then
   # An explicit path that is not a directory is a typo. Say so and exit 1, a path that was not read is never a pass.
   echo "app-store-compliance-guard: $1 is not a directory. Nothing was scanned." >&2; exit 1
@@ -717,7 +724,9 @@ IS_MAC=0
 # Mac source checks have their own scope; never label a macOS-only target as iOS.
 local mac_helper mac_kind mac_rows mac_rc sev rule title fix location
 mac_helper="$(resolve_helper macos-source-audit.py || true)"
-if [ -n "$mac_helper" ] && tool_ok python3 -c pass; then
+if [[ "$STANDALONE_TARGET" == ios || "$STANDALONE_TARGET" == android ]]; then
+  : # Explicitly scoped mobile scans retain the shared cross-platform sources.
+elif [ -n "$mac_helper" ] && tool_ok python3 -c pass; then
   mac_kind="$(python3 "$mac_helper" "$DIR" --probe 2>/dev/null)"
   if [ "$mac_kind" = macos ]; then
     IS_MAC=1; IS_IOS=0; IS_AND=0; IS_WEB=0; NEEDS_NATIVE=0
@@ -766,6 +775,12 @@ if [ "$IS_UNITY" -eq 1 ]; then
     *ios) IS_IOS=1 ;; *android) IS_AND=1 ;; *) IS_IOS=1; IS_AND=1 ;;
   esac
 fi
+
+case "$STANDALONE_TARGET" in
+  ios) IS_AND=0; IS_WEB=0; CMD_TARGET_IOS_ONLY=1 ;;
+  android) IS_IOS=0; IS_WEB=0; CMD_TARGET_ANDROID_ONLY=1 ;;
+  macos) mark_incomplete "the selected source was not recognized as a standalone Mac app"; return ;;
+esac
 
 # The actual gate the framework checks below use: a committed ios/ folder AND the
 # invoking command (when known) does not explicitly target Android-only.

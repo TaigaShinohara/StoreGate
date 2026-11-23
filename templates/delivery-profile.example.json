@@ -1,0 +1,18 @@
+{
+  "id": "example",
+  "name": "Example",
+  "repo": "../example-app",
+  "targets": {
+    "ios": {
+      "bundle": "org.example.app",
+      "build_method": "flutter",
+      "build_command": ["flutter", "build", "ipa", "--release", "--build-name", "{version}", "--build-number", "{build}"],
+      "store_id": "123456789",
+      "provider": "ConfiguredProvider",
+      "auth_env": "EXAMPLE_ASC_JWT",
+      "team_id": "TEAMID1234",
+      "locales": ["ja"],
+      "slots": {"iphone": 5, "iphone-medium": 5, "ipad": 5}
+    }
+  }
+}
