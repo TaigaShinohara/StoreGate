@@ -65,6 +65,12 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(resumed["steps"][0]["code"], "device_mismatch")
         self.assertNotIn("fixture-serial", json.dumps(resumed))
         self.assertIn("observed_at", resumed["readbacks"]["devices"]["Phone"])
+        failure = {"source": "adb", "outcome": "unconfirmed", "message": "Disconnected"}
+        with patch("storegate.device_readback", return_value=failure):
+            retry = self.resume(release, device="Phone", device_id="fixture-serial")
+        self.assertEqual(retry["steps"][0]["code"], "device_mismatch")
+        self.assertEqual(retry["readbacks"]["history"][0]["outcome"], "unconfirmed")
+        self.assertEqual(retry["readbacks"]["devices"]["Phone"]["outcome"], "mismatch")
         self.assertTrue(self.call("test-status", release)["testing"]["stages"]["qa"])
 
     def test_resume_continues_after_failed_store_and_local_checks(self):
@@ -95,6 +101,15 @@ class ResumeTests(unittest.TestCase):
         listed = execute(self.folder, self.db, argparse.Namespace(command="list"))["releases"][0]
         self.assertEqual(listed["workflow"]["phases"]["test"][0]["code"], "participation")
 
+    def test_production_can_prepare_while_store_review_waits(self):
+        release = self.release(metadata=str(self.folder))
+        review = {"source": "app_store_connect_api", "outcome": "observed", "state": "IN_REVIEW", "build": "108"}
+        with patch("storegate.store_readback", return_value=review):
+            plan = self.resume(release, phase="production", store=True)
+        self.assertEqual(plan["steps"][0]["code"], "review")
+        self.assertEqual(len(plan["runnable"]), 1)
+        self.assertIn("--prepare", plan["runnable"][0]["command"])
+
     def test_test_complete_requires_identity_even_after_qa_passes(self):
         release = self.release("android", "internal", test_plan={"Phone": ["Open PDF"]})
         self.observe(release, "distribution", device=None, source="store")
@@ -112,11 +127,15 @@ class ResumeTests(unittest.TestCase):
         current = metadata / "ja"
         current.mkdir(parents=True)
         (current / "listing.json").write_text(json.dumps({"description": "First", "review_notes": "private fixture"}))
+        outside = self.folder / "outside.txt"
+        outside.write_text("outside fixture")
+        (current / "name.txt").symlink_to(outside)
         release = self.release(metadata=str(metadata), price="free", publication="manual")
         with patch("storegate.store_readback") as store:
             original = self.call("approval-packet", release, action="submit", baseline=True)["approval_packet"]
             self.assertTrue(original["baseline_at"])
             self.assertNotIn("private fixture", json.dumps(original))
+            self.assertNotIn("outside fixture", json.dumps(original))
             (current / "listing.json").write_text(json.dumps({"description": "Updated"}))
             revised = self.call("approval-packet", release, action="submit", baseline=False)["approval_packet"]
             store.assert_not_called()
@@ -135,6 +154,19 @@ class ResumeTests(unittest.TestCase):
         evidence = next(section["rows"] for section in packet["sections"] if section["id"] == "evidence")
         self.assertTrue(any("internal" in row["label"] and "Open PDF" in row["label"] for row in evidence))
         self.assertTrue(any(row["label"] == "提出版の実機確認" and row["value"].startswith("未確認") for row in evidence))
+
+    def test_packet_reads_platform_specific_description_file(self):
+        metadata = self.folder / "metadata"
+        locale = metadata / "ja"
+        locale.mkdir(parents=True)
+        (locale / "description.txt").write_text("Apple description")
+        (locale / "full_description.txt").write_text("Play description")
+        for platform, text in (("ios", "Apple description"), ("android", "Play description")):
+            with self.subTest(platform=platform):
+                release = self.release(platform, metadata=str(metadata))
+                packet = self.call("approval-packet", release, action="submit", baseline=False)["approval_packet"]
+                listing = next(item["rows"] for item in packet["sections"] if item["id"] == "listing")
+                self.assertEqual(next(row["value"] for row in listing if row["label"] == "ja · 説明"), text)
 
     def test_read_only_beta_and_device_probes_scope_exact_build(self):
         release = self.release()

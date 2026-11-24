@@ -31,7 +31,10 @@ def ios_app(output, bundle):
         raise ValueError("対象アプリのインストールを一意に照合できません。")
     app = matching[0]
     # CoreDevice exposes both marketing version and bundle version.
-    return str(app["version"]), str(app["bundleVersion"])
+    version, build = app["version"], app["bundleVersion"]
+    if type(version) not in (str, int) or type(build) not in (str, int):
+        raise ValueError("端末の版またはビルド番号を取得できません。")
+    return str(version), str(build)
 
 
 def android_app(output, bundle):
@@ -66,7 +69,8 @@ def device_readback(target, release, identifier):
         if inspected is None:
             return {"source": source, "outcome": "not_installed", "message": "指定端末で対象アプリを確認できません。"}
         version, build = inspected
-        if any(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", item) is None for item in (version, build)):
+        if (not version or len(version) > 128 or any(not char.isprintable() for char in version)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", build)):
             raise ValueError("端末の版またはビルド番号を取得できません。")
         same = (version, build) == (release["version"], release["build"])
         message = "指定端末で対象版とビルドを照合しました。" if same else "端末に入っている版またはビルドが対象と異なります。"

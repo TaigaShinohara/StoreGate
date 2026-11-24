@@ -11,7 +11,7 @@ LISTING_FIELDS = {
     "release_notes": "更新内容", "privacy_url": "プライバシーポリシー",
     "support_url": "サポートURL", "marketing_url": "マーケティングURL", "terms_url": "利用規約URL",
 }
-ALIASES = {"name": ("name", "title", "app_name"), "description": ("full_description", "description"),
+ALIASES = {"name": ("name", "title", "app_name"),
            "release_notes": ("release_notes", "whats_new"),
            "promotional_text": ("promotional_text", "promo_text"),
            "privacy_url": ("privacy_url", "privacy_policy_url"),
@@ -21,25 +21,34 @@ STATE = {"pass": "確認済み", "blocked": "要対応", "pending": "未確認",
 SOURCE = {"store": "ストア管理画面", "device": "端末で直接確認", "tester": "テスター報告"}
 
 
-def public_listing(root, locales):
+def read_listing_file(path, root):
+    try:
+        if (path.is_symlink() or not path.resolve().is_relative_to(root)
+                or not path.is_file() or path.stat().st_size > 64 * 1024):
+            return ""
+        return path.read_text(encoding="utf-8").strip()
+    except (OSError, ValueError, RuntimeError):
+        return ""
+
+
+def public_listing(root, locales, platform):
     if not root or not Path(root).is_dir():
         return {}
-    root = Path(root)
+    root = Path(root).resolve()
+    description = ("full_description", "description") if platform == "android" else ("description",)
+    aliases = {**ALIASES, "description": description}
     texts = {}
     for locale in locales:
         completed = {}
         for folder in (root, root / "default", root / locale):
             try:
-                data = json.loads((folder / "listing.json").read_text(encoding="utf-8"))
+                data = json.loads(read_listing_file(folder / "listing.json", root))
                 data = data if isinstance(data, dict) else {}
-            except (ValueError, OSError):
+            except ValueError:
                 data = {}
             for field in LISTING_FIELDS:
-                for name in ALIASES.get(field, (field,)):
-                    try:
-                        text = (folder / f"{name}.txt").read_text(encoding="utf-8").strip()
-                    except (ValueError, OSError):
-                        text = data.get(name)
+                for name in aliases.get(field, (field,)):
+                    text = read_listing_file(folder / f"{name}.txt", root) or data.get(name)
                     if isinstance(text, str) and text.strip():
                         completed[field] = text.strip()
                         break
@@ -65,7 +74,7 @@ def packet_sections(release, target, state, readbacks, action, metadata_digest, 
     )
     checks = {item["name"]: item for item in state["checks"]}
     artifact = checks["artifact"]
-    listing = public_listing(release.get("metadata"), target["locales"])
+    listing = public_listing(release.get("metadata"), target["locales"], release["platform"])
     listing_rows = [(f"{locale} · {LISTING_FIELDS[key]}", value) for locale, fields in listing.items()
                     for key, value in fields.items()]
     image_rows = [(f"{image['locale']} · {image['slot']} · {image['order']}枚目",

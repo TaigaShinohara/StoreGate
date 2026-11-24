@@ -137,10 +137,7 @@ def production_steps(release, state, receipt):
         return [step("publication", "予定地域での入手を確認", "ai" if command else "operator", "ready",
                      "ストアで対象ビルドの公開を確認しました。",
                      "予定地域ごとに対象版の入手を確認する。", args=command)]
-    if matches and remote_state in REVIEW_WAIT:
-        return [step("review", "ストアの審査・配信処理待ち", "store", "waiting", f"最新のストア状態は {remote_state} です。",
-                     "ストアの処理が進んだあとに対象版を再照会する。",
-                     args=["resume", identifier, "--phase", "production", "--store"])]
+    review_wait = matches and remote_state in REVIEW_WAIT
     tasks = []
     if matches and remote_state in REVIEW_REJECTED:
         tasks.append(step("review_feedback", "審査結果を確認", "operator", "blocked",
@@ -160,8 +157,15 @@ def production_steps(release, state, receipt):
             args, owner = ["qa", identifier], "ai"
         if owner == "ai":
             status = "ready"
+        if review_wait and owner != "ai":
+            continue
         tasks.append(step(name, CHECK_LABELS.get(name, name), owner, status, check["message"],
                           f"{CHECK_LABELS.get(name, name)}の根拠を対象版で確認する。", args=args))
+    if review_wait:
+        waiting = step("review", "ストアの審査・配信処理待ち", "store", "waiting", f"最新のストア状態は {remote_state} です。",
+                       "ストアの処理が進んだあとに対象版を再照会する。",
+                       args=["resume", identifier, "--phase", "production", "--store"])
+        return [waiting, *tasks]
     if tasks:
         return tasks
     if receipt.get("outcome") == "unconfirmed":

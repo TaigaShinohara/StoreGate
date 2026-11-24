@@ -346,7 +346,10 @@ def saved_readbacks(db, target, release):
     scope = readback_scope(target)
     current = {"devices": {}}
     query = """SELECT kind,subject,data,time FROM readbacks WHERE release=? AND scope=?
-               AND id IN (SELECT MAX(id) FROM readbacks WHERE release=? AND scope=? GROUP BY kind,subject)"""
+               AND id IN (
+                   SELECT COALESCE(MAX(CASE WHEN json_extract(data,'$.outcome') <> 'unconfirmed' THEN id END), MAX(id))
+                   FROM readbacks WHERE release=? AND scope=? GROUP BY kind,subject
+               )"""
     for row in db.execute(query, (release["id"], scope, release["id"], scope)):
         detail = {"observed_at": row["time"], **json.loads(row["data"])}
         if row["kind"] == "device":
@@ -840,7 +843,8 @@ def resume_release(db, profile, release, args):
         attach_workflow(db, target, release, state)
     workflow = state["workflow"]
     steps = workflow["phases"][phase]
-    runnable = [item for item in steps if item["owner"] == "ai" and item["state"] == "ready"]
+    runnable = list({tuple(item["command"]): item for item in steps
+                     if item["owner"] == "ai" and item["state"] == "ready"}.values())
     if phase == "test" and workflow["pending_audits"] and not args.prepare:
         runnable.append({"code": "local_audits", "title": "未確認の監査", "owner": "ai", "state": "ready",
                          "command": ["resume", release["id"], "--phase", phase, "--prepare"]})
