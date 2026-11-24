@@ -7,6 +7,7 @@ from pathlib import Path
 import plistlib
 import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -156,6 +157,94 @@ class DeliveryTests(unittest.TestCase):
                 store.assert_not_called()
             self.assertEqual(result["state"], "console_required")
             self.assertEqual(result["listing"]["ja-JP"]["title"], "Fixture")
+
+    def test_test_rollout_preserves_availability_and_device_qa_history(self):
+        with self.workspace() as (folder, db):
+            profile = {"id": "fixture", "name": "Fixture", "repo": str(ROOT),
+                       "targets": {"android": {"bundle": "org.example.app", "platform": "android", "locales": ["ja"]}}}
+            release = {"id": "fixture/android/1.0.12/108/internal", "app": "fixture", "platform": "android",
+                       "version": "1.0.12", "build": "108", "track": "internal"}
+            save_config(db, "profiles", profile)
+            save_config(db, "releases", release)
+
+            def cli(*arguments, success=True):
+                result = subprocess.run([sys.executable, str(ROOT / "delivery/storegate.py"), "--workspace",
+                                         str(folder), arguments[0], release["id"], *arguments[1:]],
+                                        text=True, capture_output=True, check=False)
+                self.assertEqual(result.returncode, 0 if success else 1, result.stdout + result.stderr)
+                return json.loads(result.stdout)
+
+            def observe_test(stage, outcome, source, note, *options, success=True):
+                return cli("record-test", stage, "--outcome", outcome, "--source", source, "--note", note,
+                           *options, success=success)
+
+            link = "https://play.google.com/apps/testing/org.example.app"
+            self.assertEqual(cli("test-link", "--url", link)["testing"]["invite"], link)
+            cli("test-link", "--url", "https://play.google.com/apps/testing/org.example.other", success=False)
+            cli("test-link", "--url", "https://play.google.com.evil.test/apps/testing/org.example.app", success=False)
+            observe_test("distribution", "pass", "store", "Internal track active")
+            observe_test("participation", "pass", "tester", "Opted in", "--device", "Phone")
+            blocked = observe_test("availability", "blocked", "tester", "Item not found", "--device", "Phone")
+            self.assertEqual(blocked["testing"]["stages"]["distribution"][0]["outcome"], "pass")
+            self.assertEqual(blocked["testing"]["stages"]["participation"][0]["outcome"], "pass")
+            self.assertEqual(blocked["testing"]["stages"]["availability"][0]["outcome"], "blocked")
+            self.assertFalse(blocked["testing"]["stages"]["installation"])
+            observe_test("availability", "pass", "tester", "Page opened later", "--device", "Phone")
+            observe_test("qa", "pass", "tester", "Opened", "--device", "Phone", "--operation", "Open PDF", success=False)
+            observe_test("installation", "pass", "tester", "Installed", "--device", "Phone", "--version", "1.0.11",
+                         success=False)
+            installation = ("--device", "Phone", "--os", "Android 16", "--version", "1.0.12",
+                            "--build", "108", "--build-source", "store")
+            observe_test("installation", "pass", "tester", "Installed from Play", *installation)
+            observe_test("qa", "pass", "tester", "Opened", "--device", "Phone", "--operation", "Open PDF")
+            observe_test("qa", "pass", "tester", "Opened", "--device", "Phone", "--operation", "Open PDF")
+            observe_test("qa", "blocked", "tester", "PDF absent", "--device", "Phone", "--operation", "Open after restart")
+            status = cli("status")
+            progress = status["testing"]
+            self.assertEqual(progress["invite"], link)
+            self.assertEqual([entry["note"] for entry in progress["history"]], ["Item not found"])
+            self.assertEqual({entry["operation"]: entry["outcome"] for entry in progress["stages"]["qa"]},
+                             {"Open PDF": "pass", "Open after restart": "blocked"})
+            self.assertTrue(all(entry["build_source"] == "store" and entry["version"] == "1.0.12"
+                                for entry in progress["stages"]["qa"]))
+            checks = {entry["name"]: entry["state"] for entry in status["checks"]}
+            self.assertEqual(checks["device"], "pending")
+            self.assertNotIn("qa", checks)
+            revised = observe_test("qa", "pass", "tester", "Opened after retry", "--device", "Phone",
+                                   "--operation", "Open after restart")["testing"]
+            self.assertEqual(revised["stages"]["qa"][0]["note"], "Opened after retry")
+            self.assertEqual(revised["stages"]["qa"][0]["build_source"], "store")
+            self.assertEqual(revised["history"][0]["note"], "PDF absent")
+            observe_test("installation", "blocked", "tester", "Store app no longer installed", "--device", "Phone")
+            self.assertFalse(cli("status")["testing"]["stages"]["qa"])
+            self.assertIsNone(cli("test-link", "--clear")["testing"]["invite"])
+            profile["repo"] = str(folder)
+            save_config(db, "profiles", profile)
+            self.assertEqual(cli("test-status")["testing"]["stages"]["availability"][0]["outcome"], "pass")
+            listed = execute(folder, db, argparse.Namespace(command="list"))["releases"][0]
+            self.assertTrue(listed["testing"]["stages"]["availability"])
+
+    def test_test_rollout_is_scoped_to_the_store_target_and_test_build(self):
+        with self.workspace() as (folder, db):
+            ios = {"bundle": "org.example.app", "platform": "ios", "locales": ["ja"], "store_id": "42"}
+            android = {"bundle": "org.example.app", "platform": "android", "locales": ["ja"]}
+            profile = {"id": "fixture", "name": "Fixture", "repo": str(ROOT), "targets": {"ios": ios, "android": android}}
+            release = {"id": "ios-one", "app": "fixture", "platform": "ios", "version": "1.0", "build": "1",
+                       "track": "production"}
+            next_build = {**release, "id": "ios-two", "build": "2"}
+            production = {**release, "id": "android-production", "platform": "android"}
+            save_config(db, "profiles", profile)
+            for item in (release, next_build, production):
+                save_config(db, "releases", item)
+            link = "https://testflight.apple.com/join/Fixture1"
+            execute(folder, db, argparse.Namespace(command="test-link", id=release["id"], url=link, clear=False))
+            self.assertEqual(snapshot(db, profile, release)[0]["testing"]["invite"], link)
+            self.assertIsNone(snapshot(db, profile, next_build)[0]["testing"]["invite"])
+            self.assertNotIn("testing", snapshot(db, profile, production)[0])
+            with self.assertRaisesRegex(ValueError, "テストトラック"):
+                execute(folder, db, argparse.Namespace(command="test-link", id=production["id"], url=link, clear=False))
+            ios["store_id"] = "43"
+            self.assertIsNone(snapshot(db, profile, release)[0]["testing"]["invite"])
 
     def test_approval_changes_and_unknown_reconcile_without_resending(self):
         with self.workspace() as (_, db):

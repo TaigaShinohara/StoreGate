@@ -19,6 +19,7 @@ from pathlib import Path
 from assets import PLAY_COUNTS, SLOTS, inspect_images
 from builds import (build_commands, build_host, digest, file_identity, git_source, lock,
                     manifest_digest, run, tree_digest)
+from testing import TEST_STAGES, save_observation, test_progress, validate_invite
 
 ROOT = Path(__file__).resolve().parents[1]
 STORES = {"ios": ("App Store Connect", "https://appstoreconnect.apple.com/apps"),
@@ -177,6 +178,13 @@ def database(folder):
             CREATE TABLE IF NOT EXISTS legacy_mac (
                 id TEXT PRIMARY KEY, data TEXT NOT NULL, time TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS test_observations (
+                id INTEGER PRIMARY KEY, release TEXT NOT NULL REFERENCES releases(id),
+                scope TEXT NOT NULL, stage TEXT NOT NULL, device TEXT NOT NULL,
+                operation TEXT NOT NULL, data TEXT NOT NULL, time TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS test_observations_scope
+                ON test_observations(release, scope, stage, device, operation, id);
         """)
         yield db
 
@@ -281,6 +289,23 @@ def artifact_status(target, release):
         return finding("artifact", "blocked", message)
 
 
+def testing_scope(target, release):
+    if release["platform"] == "ios" or (release["platform"] == "android" and release["track"] != "production"):
+        return fingerprint([target["bundle"], target.get("store_id"), target.get("provider")])
+    return None
+
+
+def testing_status(db, target, release, scope):
+    invite = observe(db, release, "test-invite", scope, "").get("url")
+    channel = "TestFlight" if target["platform"] == "ios" else f"Google Play · {release['track']}"
+    return {"channel": channel, "invite": invite, **test_progress(db, release, scope)}
+
+
+def testing_section(db, target, release):
+    scope = testing_scope(target, release)
+    return {"testing": testing_status(db, target, release, scope)} if scope else {}
+
+
 def snapshot(db, profile, release):
     target = profile["targets"][release["platform"]]
     images, problems = inspect_images(release.get("pack"), target["platform"], target["locales"],
@@ -334,7 +359,8 @@ def snapshot(db, profile, release):
             "console": console, "bundle": target["bundle"], "store_id": target.get("store_id"),
             "version": release["version"], "build": release["build"], "track": release["track"],
             "regions": release.get("regions", []), "images": images, "checks": stages, "operations": operations,
-            "next": blocked or "対象版のストア状態を照会してください。"}, keys
+            "next": blocked or "対象版のストア状態を照会してください。",
+            **testing_section(db, target, release)}, keys
 
 
 def expand(argv, release):
@@ -460,11 +486,17 @@ def list_releases(db):
     registered = []
     for row in db.execute("SELECT data FROM releases ORDER BY id"):
         release = json.loads(row["data"])
+        profile = None
         try:
             profile = fetch(db, "profiles", release["app"])
             state, _ = snapshot(db, profile, release)
         except (ValueError, KeyError, OSError, subprocess.TimeoutExpired) as exc:
-            state = {**release, "app": release["app"], "next": str(exc), "checks": [], "images": []}
+            state = {**release, "app": (profile or {}).get("name", release["app"]),
+                     "next": str(exc), "checks": [], "images": []}
+            target = profile["targets"].get(release["platform"]) if profile else None
+            if target:
+                state.update(testing_section(db, target, release))
+                state["console"] = STORES[release["platform"]][1]
         registered.append(state)
     legacy = []
     for row in db.execute("SELECT id,data FROM legacy_mac ORDER BY id"):
@@ -612,6 +644,24 @@ def parse():
     receipt = commands.add_parser("import-qa")
     receipt.add_argument("id")
     receipt.add_argument("file", type=Path)
+    commands.add_parser("test-status", help="対象版のテストの記録を表示する").add_argument("id")
+    invite = commands.add_parser("test-link", help="対象版のテスト参加リンクを記録する")
+    invite.add_argument("id")
+    link_action = invite.add_mutually_exclusive_group(required=True)
+    link_action.add_argument("--url")
+    link_action.add_argument("--clear", action="store_true")
+    observation = commands.add_parser("record-test", help="テスト配信・端末の確認結果を記録する")
+    observation.add_argument("id")
+    observation.add_argument("stage", choices=TEST_STAGES)
+    observation.add_argument("--outcome", required=True, choices=("pass", "blocked"))
+    observation.add_argument("--source", required=True, choices=("store", "device", "tester"))
+    observation.add_argument("--note", required=True)
+    observation.add_argument("--device")
+    observation.add_argument("--os")
+    observation.add_argument("--operation")
+    observation.add_argument("--version")
+    observation.add_argument("--build")
+    observation.add_argument("--build-source", choices=("device", "tester", "store"))
     for name in ("check", "build", "prepare", "status", "store-status", "submit", "publish", "verify-publication",
                  "attest", "qa", "capture", "review-draft", "draft", "upload-build"):
         command = commands.add_parser(name)
@@ -677,12 +727,27 @@ def execute(folder, db, args):
         return {"releases": batch}
     release = fetch(db, "releases", args.id)
     profile = fetch(db, "profiles", release["app"])
+    if command == "test-status":
+        result = testing_section(db, profile["targets"][release["platform"]], release)
+        if not result:
+            raise ValueError("iOSのTestFlight案件またはGoogle Playのテストトラック案件を選んでください。")
+        return result
     if command == "status":
         return snapshot(db, profile, release)[0]
     with lock(folder / (profile["id"] + ".lock")):
         release = fetch(db, "releases", args.id)
         profile = fetch(db, "profiles", release["app"])
         target = profile["targets"][release["platform"]]
+        if command in ("test-link", "record-test"):
+            scope = testing_scope(target, release)
+            if scope is None:
+                raise ValueError("iOSのTestFlight案件またはGoogle Playのテストトラック案件を選んでください。")
+            if command == "test-link":
+                url = None if args.clear else validate_invite(args.url, target)
+                record(db, release, "test-invite", scope, "pass", {"message": "", "url": url})
+            else:
+                save_observation(db, release, scope, args, now())
+            return {"testing": testing_status(db, target, release, scope)}
         if command in ("check", "prepare"):
             audit(db, profile, release)
             return snapshot(db, profile, release)[0]

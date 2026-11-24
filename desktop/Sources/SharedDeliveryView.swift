@@ -88,6 +88,7 @@ private struct SharedRelease: Decodable, Identifiable, Sendable {
     let images: [SharedImage]?
     let console: URL?
     let operations: [SharedOperation]?
+    var testing: SharedTesting?
 
     var platformTitle: String {
         switch platform {
@@ -108,6 +109,7 @@ private struct SharedResponse: Decodable, Sendable {
     let confirmation: String?
     let migrationError: String?
     let checks: [SharedCheck]?
+    let testing: SharedTesting?
 }
 
 @MainActor
@@ -242,6 +244,12 @@ struct SharedDeliveryView: View {
         Text(release.app).font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
         Text("\(release.platformTitle)　\(release.version)（ビルド \(release.build)）")
             .foregroundStyle(.secondary)
+        if let testing = release.testing {
+            TestingPane(testing: testing, releaseID: release.id, app: release.app, version: release.version,
+                        build: release.build, busy: busy, save: perform)
+                .id(release.id)
+            Divider()
+        }
         Text(release.next ?? "").font(.headline)
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -341,8 +349,11 @@ struct SharedDeliveryView: View {
         }
     }
 
-    private func perform(_ arguments: [String]) {
-        guard !busy else { return }
+    private func perform(_ arguments: [String], onFinish: ((String?) -> Void)? = nil) {
+        guard !busy else {
+            onFinish?("実行中の処理が終わってから保存してください。")
+            return
+        }
         busy = true
         message = nil
         let script = Bundle.main.resourceURL?
@@ -353,6 +364,17 @@ struct SharedDeliveryView: View {
             do {
                 let first = try await Task.detached { try Self.call(script, folder, arguments) }.value
                 let decoded = try JSONDecoder().decode(SharedResponse.self, from: first)
+                if let onFinish {
+                    if let error = decoded.error {
+                        onFinish(error)
+                    } else if let testing = decoded.testing, let index = releases.firstIndex(where: { $0.id == arguments[1] }) {
+                        releases[index].testing = testing
+                        onFinish(nil)
+                    } else {
+                        onFinish("テストの保存結果を読み込めませんでした。")
+                    }
+                    return
+                }
                 message = decoded.error ?? decoded.migrationError
                 if let digest = decoded.confirmation {
                     let document = try JSONSerialization.jsonObject(with: first) as? [String: Any]
@@ -378,7 +400,8 @@ struct SharedDeliveryView: View {
                     selectedID = releases.first?.id
                 }
             } catch {
-                message = "配信エンジンを読み込めませんでした。Python 3と保存先を確認してください。"
+                let error = "配信エンジンを読み込めませんでした。Python 3と保存先を確認してください。"
+                if let onFinish { onFinish(error) } else { message = error }
             }
         }
     }
