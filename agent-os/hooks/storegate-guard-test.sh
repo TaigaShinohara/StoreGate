@@ -928,7 +928,7 @@ rm -rf "$D"
 # 89 a submit wrapped in bash -c "..." is still a submit and is scanned
 D="$(mk_ios_bad)"
 OUT="$(printf '%s' "$P_SHC" | CLAUDE_PROJECT_DIR="$D" bash "$GUARD" 2>&1)"; RC=$?
-echo "$OUT" | grep -q 'App Store Compliance Guard' && [ "$RC" -eq 2 ] && ok "610-27 submit inside bash -c is scanned" || bad "610-27 submit inside bash -c is scanned (rc=$RC bytes=${#OUT})"
+grep -q 'App Store Compliance Guard' <<<"$OUT" && [ "$RC" -eq 2 ] && ok "610-27 submit inside bash -c is scanned" || bad "610-27 submit inside bash -c is scanned (rc=$RC bytes=${#OUT})"
 rm -rf "$D"
 
 # 90 a leading cd into an app inside the project scopes the scan to that app, quoted and relative forms

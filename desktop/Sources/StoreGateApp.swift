@@ -103,7 +103,7 @@ struct StoreGateApp: App {
         .commands {
             CommandGroup(after: .appInfo) {
                 Button("プライバシーポリシー") {
-                    if let url = URL(string: "https://taigashinohara.github.io/StoreGate/desktop-privacy/") {
+                    if let url = URL(string: "https://github.com/TaigaShinohara/StoreGate/blob/main/docs/desktop-privacy.md") {
                         NSWorkspace.shared.open(url)
                     }
                 }
