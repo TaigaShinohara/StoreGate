@@ -882,6 +882,7 @@ def parse():
     packet.add_argument("--action", choices=("submit", "publish"), default="submit")
     packet.add_argument("--baseline", action="store_true", help="現在の確認票を差分比較用に保存する")
     commands.add_parser("test-status", help="対象版のテストの記録を表示する").add_argument("id")
+    commands.add_parser("review-contact", help="審査連絡先を環境変数からAppleの下書きへ保存する").add_argument("id")
     invite = commands.add_parser("test-link", help="対象版のテスト参加リンクを記録する")
     invite.add_argument("id")
     link_action = invite.add_mutually_exclusive_group(required=True)
@@ -993,6 +994,12 @@ def execute(folder, db, args):
             return approval_packet(db, profile, release, args.action, args.baseline)
         if command == "preflight":
             return preflight(db, profile, release, args.store)
+        if command == "review-contact":
+            from stores import Apple, review_contact_from_env
+            if release["platform"] not in ("ios", "macos") or release["track"] != "production":
+                raise ValueError("Appleの本番トラックの対象版を選んでください。")
+            contact = review_contact_from_env()
+            return Apple(target).sync_review_contact(release, contact)
         if command in ("test-link", "record-test"):
             scope = testing_scope(target, release)
             if scope is None:

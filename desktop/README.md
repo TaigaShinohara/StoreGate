@@ -69,6 +69,26 @@ python3 delivery/storegate.py status example/ios/1.0.0/1/production
 - Appleの公開後は、対象版の「公開先のApp Storeを照合」または `verify-publication <ID>` で、App Store Connectの配信状態とビルド番号、予定地域ごとの公開カタログの版とURLを確認します。すべての予定地域で版が一致すると、公開確認を案件に記録します。[Appleの公開カタログ取得](https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/LookupExamples.html)
 - Google PlayやAppleの地域別照会で手動確認が必要な場合は、各地域から対象版を入手できることを確認し、GUIの「公開後の入手確認」または `attest <ID> publication --region JP --note <確認根拠>` で記録します。複数の地域には `--region` を繰り返して指定します。記録時にストアAPIから対象ビルドの配信状態も確認します。
 
+### Appleの審査連絡先
+
+名・姓・電話番号・メールは、リポジトリの外にある案件専用の `.env` から渡します。たとえば `~/.config/storegate/<アプリID>/.env` を用意し、ファイルの権限を `0600` にします。1Passwordで管理している連絡先は `op://` の参照を使えます。公開マニュアル、チャット、Git、案件の確認票には変数名だけを記録します。
+
+```dotenv
+STOREGATE_REVIEW_CONTACT_FIRST_NAME=""
+STOREGATE_REVIEW_CONTACT_LAST_NAME=""
+STOREGATE_REVIEW_CONTACT_PHONE=""
+STOREGATE_REVIEW_CONTACT_EMAIL=""
+```
+
+電話番号は `+` と国番号から始め、数字を続けます。StoreGateのAppleターゲットに `auth_env` を登録し、承認済みの認証ランナーから対応するApp Store Connect APIトークンを渡します。対象の版とビルドを指定して次を実行します。
+
+```sh
+op run --env-file="$HOME/.config/storegate/<アプリID>/.env" -- \
+  python3 delivery/storegate.py review-contact '<対象版ID>'
+```
+
+対象のApp Storeアプリ・版・有効なビルドと編集可能な下書きを照合してから、審査連絡先を保存します。保存結果を読み戻せた場合は `review_contact_verified` が返ります。値はCLI出力や案件DBに記録されません。審査への送信と公開は、それぞれ対象版の確認を経て実行します。[Appleの審査連絡先](https://developer.apple.com/documentation/appstoreconnectapi/app-store-review-details)
+
 ### テスト配信と実機QA
 
 対象版を選ぶと、iOSではTestFlight、Androidでは登録したテストトラックの記録欄が表示されます。ストア管理画面で対象ビルドのテスト配信を確認し、テスターの参加、端末での入手可否、インストールをそれぞれ記録します。配布ページが開かなかった場合は「要確認」で根拠を保存し、再試行の結果を同じ端末名で記録します。前回の結果は「過去のテスト記録」から確認できます。

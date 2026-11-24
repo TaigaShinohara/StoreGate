@@ -20,7 +20,7 @@ from builds import android_identity, build_host, file_identity, lock, packaged_p
 from jdk import JDK, resolve_jdk
 from storegate import (ROOT, audit, contexts, database, dispatch_store, execute, guard_result, import_qa, migrate,
                        privacy_corrections, record, save_config, snapshot)
-from stores import Apple, Google, StoreError, apple_storefront
+from stores import Apple, Google, StoreError, apple_storefront, review_contact_from_env
 
 
 def png(width=320, height=480, color=2):
@@ -644,6 +644,53 @@ class DeliveryTests(unittest.TestCase):
         with self.assertRaisesRegex(StoreError, "版が一致しません"):
             apple.review_draft({"platform": "IOS", "version_id": "correct"})
         client.request.assert_not_called()
+
+    def test_apple_review_contact_updates_only_changed_contact_fields(self):
+        contact = {
+            "contactFirstName": "Test",
+            "contactLastName": "Person",
+            "contactPhone": "+15005550006",
+            "contactEmail": "tester@example.invalid",
+        }
+        apple = Apple.__new__(Apple)
+        apple.client = Mock()
+        apple.status = Mock(return_value={
+            "state": "PREPARE_FOR_SUBMISSION", "build": "108", "build_state": "VALID", "version_id": "version",
+        })
+        previous = {"id": "detail", "attributes": {**contact, "contactEmail": "old@example.invalid", "notes": "Keep"}}
+        actual = {"id": "detail", "attributes": contact}
+        apple.client.request.side_effect = [{"data": previous}, {}, {"data": actual}, {"data": actual}]
+        release = {"version": "1.0.12", "build": "108"}
+        verified = {"state": "review_contact_verified"}
+        self.assertEqual(apple.sync_review_contact(release, contact), verified)
+        self.assertEqual(apple.sync_review_contact(release, contact), verified)
+        patch = apple.client.request.call_args_list[1]
+        self.assertEqual(patch.args, (
+            "/v1/appStoreReviewDetails/detail", "PATCH", {
+                "data": {"type": "appStoreReviewDetails", "id": "detail",
+                         "attributes": {"contactEmail": contact["contactEmail"]}},
+            },
+        ))
+        self.assertEqual(apple.client.request.call_count, 4)
+
+        apple.client.reset_mock()
+        apple.status.return_value["build"] = "109"
+        with self.assertRaisesRegex(StoreError, "対象版"):
+            apple.sync_review_contact(release, contact)
+        apple.client.request.assert_not_called()
+
+    def test_review_contact_preflight_keeps_values_out_of_errors(self):
+        with patch.dict(os.environ, {
+            "STOREGATE_REVIEW_CONTACT_FIRST_NAME": "Test",
+            "STOREGATE_REVIEW_CONTACT_LAST_NAME": "Person",
+            "STOREGATE_REVIEW_CONTACT_PHONE": "private-invalid-phone",
+            "STOREGATE_REVIEW_CONTACT_EMAIL": "tester@example.invalid",
+        }, clear=True):
+            with self.assertRaises(StoreError) as failure:
+                review_contact_from_env()
+            self.assertNotIn("private-invalid-phone", str(failure.exception))
+            os.environ["STOREGATE_REVIEW_CONTACT_PHONE"] = "+15005550006"
+            self.assertEqual(review_contact_from_env()["contactPhone"], "+15005550006")
 
     def test_google_status_is_scoped_to_track_and_build(self):
         google = Google.__new__(Google)
