@@ -3,6 +3,7 @@ import base64
 import binascii
 import json
 import os
+import re
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
@@ -80,6 +81,23 @@ def get_one(items, message):
     if len(items) != 1:
         raise StoreError(message)
     return items[0]
+
+
+def review_contact_from_env():
+    fields = {
+        "contactFirstName": "STOREGATE_REVIEW_CONTACT_FIRST_NAME",
+        "contactLastName": "STOREGATE_REVIEW_CONTACT_LAST_NAME",
+        "contactPhone": "STOREGATE_REVIEW_CONTACT_PHONE",
+        "contactEmail": "STOREGATE_REVIEW_CONTACT_EMAIL",
+    }
+    contact = {field: os.environ.get(variable, "").strip() for field, variable in fields.items()}
+    if any(not value or not value.isprintable() or value.startswith("op://") for value in contact.values()):
+        raise StoreError("審査連絡先4項目を認証ランナー経由で環境変数に渡してください。")
+    if not re.fullmatch(r"\+[1-9][0-9]{1,14}", contact["contactPhone"]):
+        raise StoreError("審査連絡先の電話番号はプラス記号と国番号を含む形式で入力してください。")
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+", contact["contactEmail"]):
+        raise StoreError("審査連絡先のメールアドレスの形式を確認してください。")
+    return contact
 
 
 def apple_storefront(app, bundle, platform, region):
@@ -228,6 +246,30 @@ class Apple:
                for locale, fields in changes.items() for key, value in fields.items()):
             raise StoreError("App Store Connectから読み戻した掲載原稿が一致しません。")
         return {"state": "draft_verified", "localizations": sorted(changes), "screenshots": len(images)}
+
+    def sync_review_contact(self, release, contact):
+        remote = self.status(release)
+        if (remote.get("state") != "PREPARE_FOR_SUBMISSION" or remote.get("build") != release["build"]
+                or remote.get("build_state") != "VALID"):
+            raise StoreError("App Store Connectで対象版と有効なビルドの下書きを確認してください。")
+        version_id = remote["version_id"]
+        path = f"/v1/appStoreVersions/{version_id}/appStoreReviewDetail"
+        kind = "appStoreReviewDetails"
+        fields = {f"fields[{kind}]": ",".join(contact)}
+        previous = self.client.request(path, params=fields)["data"]
+        if previous is None:
+            self.client.request(f"/v1/{kind}", "POST", object_data(
+                kind, attributes=contact, relationships={"appStoreVersion": ref("appStoreVersions", version_id)}))
+        else:
+            patch = {key: value for key, value in contact.items() if previous["attributes"].get(key) != value}
+            if not patch:
+                return {"state": "review_contact_verified"}
+            self.client.request(f"/v1/{kind}/{previous['id']}", "PATCH",
+                                object_data(kind, id=previous["id"], attributes=patch))
+        actual = self.client.request(path, params=fields)["data"]
+        if not actual or any(actual["attributes"].get(key) != value for key, value in contact.items()):
+            raise StoreError("App Store Connectから読み戻した審査連絡先が一致しません。")
+        return {"state": "review_contact_verified"}
 
     def review_draft(self, remote, create=False):
         rows = list(self.client.elements("/v1/reviewSubmissions", {"filter[app]": self.app}))
