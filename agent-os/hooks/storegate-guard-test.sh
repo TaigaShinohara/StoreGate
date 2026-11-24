@@ -264,6 +264,23 @@ OUT="$(bash "$GUARD" "$D" 2>&1)"; RC=$?
 echo "$OUT" | grep -q 'BOTH-SUBSCRIPTION-HARD-CANCEL' && ok "Subscription phone-only cancel blocks" || bad "Subscription phone-only cancel blocks"
 rm -rf "$D"
 
+D="$(mktemp -d)"
+printf '%s\n' '{"name":"t"}' > "$D/package.json"
+printf '%s\n' '<html><body>Your subscription renews monthly. To cancel, call support.</body></html>' > "$D/index.html"
+OUT="$(bash "$GUARD" "$D" 2>&1)"
+echo "$OUT" | grep -q 'BOTH-SUBSCRIPTION-HARD-CANCEL' && ok "Subscription cancel-then-call instruction blocks" || bad "Subscription cancel-then-call instruction blocks"
+printf '%s\n' '<html><body>Your subscription renews monthly. Manage it in settings.</body></html>' > "$D/index.html"
+printf '%s\n' '[self cancel:((NSNumber *)call.arguments) result:result];' > "$D/Notifications.m"
+printf '%s\n' 'private void cancel(MethodCall call, Result result) {}' > "$D/Notifications.java"
+printf '%s\n' '/// If a call is still in progress, cancels it by returning an error.' 'func cancelInProgressCall() {}' > "$D/ImagePicker.swift"
+OUT="$(bash "$GUARD" "$D" 2>&1)"
+if echo "$OUT" | grep -q 'BOTH-SUBSCRIPTION-HARD-CANCEL'; then
+  bad "Notification method calls do not describe subscription cancellation"
+else
+  ok "Notification method calls do not describe subscription cancellation"
+fi
+rm -rf "$D"
+
 # 17 Subscription self-service cancel stays silent
 D="$(mktemp -d)"; mkdir -p "$D"
 printf '{"name":"t"}' > "$D/package.json"
@@ -2035,6 +2052,25 @@ D="$(mk_rr_ios '' 'class A { func signIn() {} }
 /* func deleteUser() {} */')"
 rr_run "$D"
 rr_has 'APPLE-5.1.1-NO-ACCOUNT-DELETION' && ok "rr-A02-2 a deletion call that exists only in comments raises the finding" || bad "rr-A02-2 a deletion call that exists only in comments raises the finding (rc=$RC)"
+rm -rf "$D"
+D="$(mk_rr_ios '' 'let appName = "Local library"')"
+mkdir -p "$D/auth"
+printf '%s\n' '{"local_auth":{},"secret_references":{},"verification":"Use OAuth at http://localhost:8080"}' > "$D/auth/signing.example.json"
+printf '%s\n' 'abstract class AppLocalizations { String get libraryCopyCatalogInfo; }' > "$D/App/strings.dart"
+rr_run "$D"
+if rr_has 'APPLE-2.1-STAGING-BACKEND' || rr_has 'APPLE-5.1.1-NO-ACCOUNT-DELETION'; then
+  bad "Release authentication examples do not describe an app backend or user account"
+else
+  ok "Release authentication examples do not describe an app backend or user account"
+fi
+printf '%s\n' '{"endpoint":"https://staging.app.io","createAccount":true}' > "$D/auth/runtime.example.json"
+rr_run "$D"
+if echo "$OUT" | grep -A1 'APPLE-2.1-STAGING-BACKEND' | grep -q 'file\. auth/runtime\.example\.json:1' &&
+   echo "$OUT" | grep -A1 'APPLE-5.1.1-NO-ACCOUNT-DELETION' | grep -q 'file\. auth/runtime\.example\.json:1'; then
+  ok "App configuration alongside release examples remains detected and attributed"
+else
+  bad "App configuration alongside release examples remains detected and attributed"
+fi
 rm -rf "$D"
 D="$(mk_rr_ios '' 'import AVFoundation
 class A { func signIn() {} }

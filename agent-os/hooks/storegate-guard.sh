@@ -619,6 +619,22 @@ own_privacy_manifest() {
     | grep . >/dev/null
 }
 
+app_behavior_files() {
+  local file
+  while IFS= read -r file; do
+    # Local signing and store authentication templates describe tooling, not app behavior.
+    case "${file#"${DIR%/}"/}" in
+      auth/*.example.json)
+        if grep -Eq '"local_auth"[[:space:]]*:' "$file" &&
+           grep -Eq '"secret_references"[[:space:]]*:' "$file" &&
+           grep -Eq '"verification"[[:space:]]*:' "$file"; then
+          continue
+        fi ;;
+    esac
+    printf '%s\n' "$file"
+  done < "$FILELIST"
+}
+
 # True only if a STRING LITERAL containing the regex appears in RELEASE-reachable source. For
 # Swift, `#if DEBUG` / `#if !RELEASE` debug-only regions are stripped first, so a URL only a debug
 # build compiles is not flagged. The string-literal requirement (the match must sit inside "...")
@@ -639,7 +655,7 @@ release_string_has() {
         ' "$f" 2>/dev/null ;;
       *) cat "$f" 2>/dev/null ;;
     esac
-  done < "$FILELIST" \
+  done < <(app_behavior_files) \
     | LC_ALL=C grep -E "\"[^\"]*($1)[^\"]*\"" >/dev/null 2>&1
   # NOTE. no `grep -q`. With `set -o pipefail`, `grep -q` exits on the first match and
   # closes the pipe, so the still-writing awk/cat producer gets SIGPIPE (141) and pipefail
@@ -655,6 +671,7 @@ hit_file() {
   case "$1" in
     manifest) f="$(grep '/AndroidManifest[.]xml$' "$FILELIST" | tr '\n' '\0' | xargs -0 grep -EIls -e "$2" 2>/dev/null | head -1)" ;;
     config) f="$(grep -E "$CONFIG_FILES_RE" "$FILELIST" | tr '\n' '\0' | xargs -0 grep -EIls -e "$2" 2>/dev/null | head -1)" ;;
+    app_behavior) f="$(app_behavior_files | tr '\n' '\0' | xargs -0 grep -EIls -e "$2" 2>/dev/null | head -1)" ;;
     *) f="$(tr '\n' '\0' < "$FILELIST" | xargs -0 grep -EIls -e "$2" 2>/dev/null | head -1)" ;;
   esac
   [ -n "$f" ] || return 0
@@ -881,10 +898,11 @@ if grep_has 'lorem ipsum|example\.(com|org)|YOUR_[A-Z_]+_(KEY|HERE)|INSERT_[A-Z_
   finding high "BOTH-PLACEHOLDER" "Placeholder content (lorem ipsum, example.com, dummy text) found in sources" "Replace placeholder text and assets with real content." src 'lorem ipsum|example\.(com|org)|YOUR_[A-Z_]+_(KEY|HERE)|INSERT_[A-Z_]+_HERE|dummy (text|content|data)|(john|jane)@example|"Acme( Inc| Corp)?"'
 fi
 # ROSCA and CA/NY/MA negative-option laws bind regardless of the vacated federal rule.
-# "call" and "write" match as whole words only, or "renews automatically until cancelled" and
-# "overwrite ... cancel" read as an instruction to call or write in.
-if grep_has 'subscri(be|ption)|auto.renew|membership' && grep_has '(^|[^A-Za-z])[Cc]all[^A-Za-z].{0,24}[Cc]ancel|[Cc]ancel.{0,25}[^A-Za-z][Cc]all([^A-Za-z]|$)|[Mm]ail.{0,25}[Cc]ancel|(^|[^A-Za-z])[Ww]rite[^A-Za-z].{0,24}[Cc]ancel|[Cc]ancel.{0,15}(in.person|by.phone|by.mail)'; then
-  finding high "BOTH-SUBSCRIPTION-HARD-CANCEL" "Subscription cancellation appears to require a phone call, mail, or an in-person visit" "Provide a self-service cancellation path at least as easy as sign-up (FTC Section 5, ROSCA, and CA/NY/MA negative-option laws)." src '(^|[^A-Za-z])[Cc]all[^A-Za-z].{0,24}[Cc]ancel|[Cc]ancel.{0,25}[^A-Za-z][Cc]all([^A-Za-z]|$)|[Mm]ail.{0,25}[Cc]ancel|(^|[^A-Za-z])[Ww]rite[^A-Za-z].{0,24}[Cc]ancel|[Cc]ancel.{0,15}(in.person|by.phone|by.mail)'
+# Require prose around phone instructions so call.method, method declarations, and comments
+# about cancelling a pending application call do not read as instructions to subscribers.
+SUBSCRIPTION_CANCEL_RE='(^|[^A-Za-z])[Cc]all:?[[:blank:]]+[[:alnum:]()+ .-]{0,24}[Cc]ancel([^[:alnum:]_]|$)|[Cc]ancel([[:blank:]][[:alnum:] ]{1,24})?([,:][[:blank:]]+|[[:blank:]]+[Bb]y[[:blank:]]+)[Cc]all(ing)?([^[:alnum:]_]|$)|[Mm]ail.{0,25}[Cc]ancel|(^|[^A-Za-z])[Ww]rite[^A-Za-z].{0,24}[Cc]ancel|[Cc]ancel.{0,15}(in.person|by.phone|by.mail)'
+if grep_has 'subscri(be|ption)|auto.renew|membership' && grep_has "$SUBSCRIPTION_CANCEL_RE"; then
+  finding high "BOTH-SUBSCRIPTION-HARD-CANCEL" "Subscription cancellation appears to require a phone call, mail, or an in-person visit" "Provide a self-service cancellation path at least as easy as sign-up (FTC Section 5, ROSCA, and CA/NY/MA negative-option laws)." src "$SUBSCRIPTION_CANCEL_RE"
 fi
 # fastlane precheck derived metadata checks
 if grep_has 'coming soon|coming-soon|will be available|in a future update|stay tuned'; then
@@ -987,12 +1005,12 @@ fi
 # Gated like the framework checks, so an Android-only command never meets an Apple finding.
 if [ "$IOS_TARGET_ACTIVE" -eq 1 ]; then
   if release_string_has 'localhost|127\.0\.0\.1|staging\.[a-z]|ngrok\.io'; then
-    finding critical "APPLE-2.1-STAGING-BACKEND" "A release-build string points at localhost or a staging host" "Point the release build at the live production backend. A localhost/staging URL inside #if DEBUG or a comment is fine. this only flags strings the release build actually compiles." src 'localhost|127\.0\.0\.1|staging\.[a-z]|ngrok\.io'
+    finding critical "APPLE-2.1-STAGING-BACKEND" "A release-build string points at localhost or a staging host" "Point the release build at the live production backend. A localhost/staging URL inside #if DEBUG or a comment is fine. this only flags strings the release build actually compiles." app_behavior 'localhost|127\.0\.0\.1|staging\.[a-z]|ngrok\.io'
   fi
-  if grep_has 'signIn|logIn|LoginView|OAuth|FirebaseAuth|createAccount|signUp'; then
-    if ! impl_has 'deleteAccount|delete_account|account deletion|deleteUser'; then
-      finding critical "APPLE-5.1.1-NO-ACCOUNT-DELETION" "Account creation found but no in app account deletion" "Add an in app account deletion flow (Apple 5.1.1(v))." src 'signIn|logIn|LoginView|OAuth|FirebaseAuth|createAccount|signUp'
-    fi
+  # Lower-camel names need a left boundary. CatalogInfo contains logIn but is not an account API.
+  ACCOUNT_LOCATION="$(hit_file app_behavior '(^|[^[:alnum:]_])(signIn|logIn|createAccount|signUp)|SignIn|LogIn|CreateAccount|SignUp|LoginView|OAuth|FirebaseAuth')"
+  if [ -n "$ACCOUNT_LOCATION" ] && ! impl_has 'deleteAccount|delete_account|account deletion|deleteUser'; then
+    finding critical "APPLE-5.1.1-NO-ACCOUNT-DELETION" "Account creation found but no in app account deletion" "Add an in app account deletion flow (Apple 5.1.1(v))." path "$ACCOUNT_LOCATION"
   fi
   if code_has 'AVCaptureDevice|UIImagePickerController'; then
     config_has 'NSCameraUsageDescription' || finding critical "APPLE-5.1.1-MISSING-USAGE-DESCRIPTION" "Camera used without NSCameraUsageDescription" "Add NSCameraUsageDescription with a specific reason." src 'AVCaptureDevice|UIImagePickerController'
