@@ -64,7 +64,7 @@ def distribution_step(release, testing, receipt):
                 "公式画面で対象トラックまたはテストグループの配信を確認して記録する。")
 
 
-def tester_step(device, stages, operations, receipt):
+def tester_step(release, device, stages, operations, receipt):
     for name, resume_when in (
         ("participation", "招待または参加リンクをテスト端末で開き、対象アカウントで参加結果を記録する。"),
         ("availability", "参加したアカウントで配布ページを開き直し、入手できるか記録する。"),
@@ -79,6 +79,14 @@ def tester_step(device, stages, operations, receipt):
                 and receipt["observed_at"] >= recorded["time"]):
             return step("device_mismatch", "端末の対象版を照合", "tester", "blocked", receipt["message"],
                         "テスト配布から対象版を入れ直し、端末または本人報告で版を照合して記録する。", device=device)
+        if name == "installation":
+            recorded_identity = (recorded.get("version"), recorded.get("build"))
+            device_identity_confirmed = (receipt.get("outcome") == "matches"
+                                         and receipt["observed_at"] >= recorded["time"])
+            if recorded_identity != (release["version"], release["build"]) and not device_identity_confirmed:
+                return step("device_identity", "端末の版・ビルドを照合", "tester", "waiting",
+                            "インストール済みの版とビルドの根拠が揃っていません。",
+                            "端末を読み取るか、版・ビルドと確認元をインストール結果に記録する。", device=device)
     qa = {row["operation"]: row for row in stages["qa"] if row["device"] == device}
     missing = [name for name in operations if name not in qa or qa[name]["outcome"] != "pass"]
     failures = [name for name, row in qa.items() if row["outcome"] == "blocked"]
@@ -103,7 +111,7 @@ def test_steps(release, testing, readbacks):
                      "招待をテスト端末へ渡し、参加した端末を記録する。")]
     tasks = []
     for device in devices:
-        task = tester_step(device, stages, matrix.get(device, []), readbacks.get("devices", {}).get(device, {}))
+        task = tester_step(release, device, stages, matrix.get(device, []), readbacks.get("devices", {}).get(device, {}))
         if task:
             tasks.append(task)
     if tasks:

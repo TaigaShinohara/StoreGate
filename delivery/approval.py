@@ -52,7 +52,7 @@ def section(code, title, rows):
     return {"id": code, "title": title, "rows": [{"label": label, "value": value} for label, value in rows]}
 
 
-def packet_sections(release, target, state, readbacks, action, metadata_digest):
+def packet_sections(release, target, state, readbacks, action, metadata_digest, linked_testing=()):
     fields = (
         ("アプリ", state["app"]), ("アプリID", target["bundle"]), ("ストア登録ID", target.get("store_id")),
         ("版・ビルド", f"{release['version']}（{release['build']}）"),
@@ -74,15 +74,22 @@ def packet_sections(release, target, state, readbacks, action, metadata_digest):
                      for item in state["checks"] if item["name"] != "publication"]
     attestations = [(CHECK_LABELS[name], f"{STATE.get(checks[name]['state'], '未確認')}\n{checks[name]['message']}")
                     for name in ("declarations", "device", "storefront", "qa") if name in checks]
-    for name, observations in state.get("testing", {}).get("stages", {}).items():
-        for item in observations:
-            label = " · ".join(filter(None, (TEST_LABELS[name], item["device"], item["operation"])))
-            observed = ""
-            if name in ("installation", "qa"):
-                build = item.get("build") or "ビルド未確認"
-                build_source = SOURCE.get(item.get("build_source"), "確認元未記録")
-                observed = f" · 版 {item.get('version') or '未確認'} · ビルド {build}（{build_source}）"
-            attestations.append((label, f"{STATE[item['outcome']]} · {SOURCE[item['source']]}{observed}"))
+    for test in (state.get("testing"), *linked_testing):
+        if not test:
+            continue
+        for name, observations in test["stages"].items():
+            for item in observations:
+                label = " · ".join(filter(None, (test["channel"], TEST_LABELS[name], item["device"], item["operation"])))
+                observed = ""
+                if name in ("installation", "qa"):
+                    build = item.get("build") or "ビルド未確認"
+                    build_source = SOURCE.get(item.get("build_source"), "確認元未記録")
+                    observed = f" · 版 {item.get('version') or '未確認'} · ビルド {build}（{build_source}）"
+                attestations.append((label, f"{STATE[item['outcome']]} · {SOURCE[item['source']]}{observed}"))
+    for device, receipt in sorted(readbacks.get("devices", {}).items()):
+        identity = f"版 {receipt.get('version') or '未確認'} · ビルド {receipt.get('build') or '未確認'}"
+        attestations.append((f"接続端末の照合 · {device}", f"{receipt['source']} · {identity}\n{receipt['message']}"))
+        attestations.append(("照会日時", receipt["observed_at"]))
     store = readbacks.get("production_store", {})
     if store.get("outcome") == "observed":
         remote_text = f"{store.get('state') or '未確認'} · ビルド {store.get('build', store.get('versionCode')) or '未確認'}"
@@ -107,14 +114,18 @@ def packet_sections(release, target, state, readbacks, action, metadata_digest):
     ]
 
 
+def comparable_sections(sections):
+    return [{**item, "rows": [row for row in item["rows"] if row["label"] != "照会日時"]} for item in sections]
+
+
 def changes_since(previous, current):
     if previous is None:
         return []
-    before = {item["id"]: item for item in previous}
+    before = {item["id"]: item for item in comparable_sections(previous)}
     changes = []
-    for item in current:
-        old = [row for row in (before.get(item["id"]) or {}).get("rows", []) if row["label"] != "照会日時"]
-        new = [row for row in item["rows"] if row["label"] != "照会日時"]
+    for item in comparable_sections(current):
+        old = (before.get(item["id"]) or {}).get("rows", [])
+        new = item["rows"]
         if old == new:
             continue
         stale_rows = [row for row in old if row not in new]

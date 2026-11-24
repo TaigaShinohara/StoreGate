@@ -95,6 +95,18 @@ class ResumeTests(unittest.TestCase):
         listed = execute(self.folder, self.db, argparse.Namespace(command="list"))["releases"][0]
         self.assertEqual(listed["workflow"]["phases"]["test"][0]["code"], "participation")
 
+    def test_test_complete_requires_identity_even_after_qa_passes(self):
+        release = self.release("android", "internal", test_plan={"Phone": ["Open PDF"]})
+        self.observe(release, "distribution", device=None, source="store")
+        for stage in ("participation", "availability", "installation"):
+            self.observe(release, stage)
+        self.observe(release, "qa", operation="Open PDF")
+        self.assertEqual(self.resume(release)["steps"][0]["code"], "device_identity")
+        result = {"source": "adb", "outcome": "matches", "version": "1.0.12", "build": "108",
+                  "message": "Verified installed build"}
+        with patch("storegate.device_readback", return_value=result):
+            self.assertEqual(self.resume(release, device="Phone", device_id="fixture")["state"], "complete")
+
     def test_approval_packet_compares_content_without_granting_approval(self):
         metadata = self.folder / "metadata"
         current = metadata / "ja"
@@ -113,6 +125,16 @@ class ResumeTests(unittest.TestCase):
         self.assertIn("ja · 説明", change["labels"])
         self.assertTrue(self.call("approval-packet", release, action="publish", baseline=False)["approval_packet"]["baseline_at"] is None)
         self.assertFalse(self.db.execute("SELECT 1 FROM operations").fetchall())
+
+    def test_play_packet_includes_same_build_test_evidence_without_passing_production_qa(self):
+        internal = self.release("android", "internal")
+        production = self.release("android", "production")
+        self.observe(internal, "installation", version="1.0.12", build="108", build_source="store")
+        self.observe(internal, "qa", operation="Open PDF")
+        packet = self.call("approval-packet", production, action="submit", baseline=False)["approval_packet"]
+        evidence = next(section["rows"] for section in packet["sections"] if section["id"] == "evidence")
+        self.assertTrue(any("internal" in row["label"] and "Open PDF" in row["label"] for row in evidence))
+        self.assertTrue(any(row["label"] == "提出版の実機確認" and row["value"].startswith("未確認") for row in evidence))
 
     def test_read_only_beta_and_device_probes_scope_exact_build(self):
         release = self.release()

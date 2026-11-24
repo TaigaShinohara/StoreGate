@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from assets import PLAY_COUNTS, SLOTS, inspect_images
-from approval import changes_since, packet_sections
+from approval import changes_since, comparable_sections, packet_sections
 from builds import (build_commands, build_host, digest, file_identity, git_source, lock,
                     manifest_digest, run, tree_digest)
 from jdk import resolve_jdk
@@ -627,6 +627,19 @@ def save_operation(db, release, action, digest, state, data):
                    (release["id"], action, digest, state, encoded(data), now()))
 
 
+def review_sections(db, target, release, state, action, metadata_digest):
+    linked = []
+    if release["platform"] == "android" and release["track"] == "production":
+        prefix = "/".join(release[name] for name in ("app", "platform", "version", "build")) + "/"
+        rows = db.execute("SELECT data FROM releases WHERE substr(id,1,?)=? ORDER BY id", (len(prefix), prefix))
+        for row in rows:
+            test = json.loads(row["data"])
+            scope = testing_scope(target, test)
+            if scope:
+                linked.append(testing_status(db, target, test, scope))
+    return packet_sections(release, target, state, state["readbacks"], action, metadata_digest, linked)
+
+
 def dispatch_store(db, release, action, adapter, state=None, keys=None, approval=None, target=None):
     from stores import StoreError
 
@@ -661,8 +674,8 @@ def dispatch_store(db, release, action, adapter, state=None, keys=None, approval
     if artifact:
         summary["artifact_sha256"] = artifact.get("sha256")
     if target is not None:
-        sections = packet_sections(release, target, state, {}, action, keys["metadata"])
-        summary["approval_packet_sha256"] = fingerprint(sections)
+        sections = review_sections(db, target, release, state, action, keys["metadata"])
+        summary["approval_packet_sha256"] = fingerprint(comparable_sections(sections))
     confirmation = fingerprint(summary)
     if approval is None:
         return {"state": "confirmation_required", "confirmation": confirmation, "summary": summary}
@@ -762,7 +775,7 @@ def approval_packet(db, profile, release, action, save_baseline):
         raise ValueError("本番トラックの対象版で確認票を開いてください。")
     state, keys = snapshot(db, profile, release)
     target = profile["targets"][release["platform"]]
-    sections = packet_sections(release, target, state, state["readbacks"], action, keys["metadata"])
+    sections = review_sections(db, target, release, state, action, keys["metadata"])
     name = "approval-packet-" + action
     previous = observe(db, release, name, readback_scope(target), "")
     if save_baseline:
@@ -813,8 +826,10 @@ def resume_release(db, profile, release, args):
                     audit_metadata(db, release, target, keys[name])
                 progress.append({"check": name, "outcome": "checked"})
             except (ValueError, OSError, subprocess.TimeoutExpired):
+                message = "この確認を完了できませんでした。設定とツールを確認してください。"
+                record(db, release, name, keys[name], "not_checked", {"message": message})
                 progress.append({"check": name, "outcome": "unconfirmed",
-                                 "message": "この確認を完了できませんでした。設定とツールを確認してください。"})
+                                 "message": message})
     if selected:
         try:
             state, _ = snapshot(db, profile, release)
