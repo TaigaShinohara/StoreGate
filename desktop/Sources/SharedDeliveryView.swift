@@ -110,6 +110,34 @@ private struct SharedResponse: Decodable, Sendable {
     let migrationError: String?
     let checks: [SharedCheck]?
     let testing: SharedTesting?
+    let preflight: SharedPreflight?
+}
+
+private struct SharedPreflight: Decodable, Sendable {
+    struct Check: Decodable, Identifiable, Sendable {
+        var id: String { name }
+        let name: String
+        let title: String
+        let state: String
+        let message: String
+
+        var status: String {
+            switch state {
+            case "pass": "確認済み"
+            case "blocked": "要対応"
+            case "stale": "再確認"
+            default: "未確認"
+            }
+        }
+    }
+
+    let app: String
+    let bundle: String
+    let version: String
+    let build: String
+    let track: String
+    let console: URL
+    let checks: [Check]
 }
 
 @MainActor
@@ -125,6 +153,10 @@ struct SharedDeliveryView: View {
     @State private var showEvidence = false
     @State private var evidenceCheck = "account"
     @State private var evidenceNote = ""
+    @State private var preflightID: String?
+    @State private var preflightReport: SharedPreflight?
+    @State private var showPreflight = false
+    @State private var preflightError: String?
 
     private struct Approval: Identifiable {
         var id: String { digest }
@@ -210,6 +242,7 @@ struct SharedDeliveryView: View {
                 Text("対象版の確認結果を記録").font(.headline)
                 Picker("確認項目", selection: $evidenceCheck) {
                     Text("アカウント・権限").tag("account")
+                    Text("申告の準備").tag("declaration_plan")
                     Text("実機での確認").tag("device")
                     Text("担当者による申告").tag("declarations")
                     Text("提出前チェックリスト").tag("checklist")
@@ -228,7 +261,7 @@ struct SharedDeliveryView: View {
                     Button("確認済みとして保存") {
                         guard let selectedID else { return }
                         let scope = evidenceCheck == "publication" ? regions.flatMap { ["--region", $0] } : []
-                        perform(["attest", selectedID, evidenceCheck, "--note", evidenceNote] + scope)
+                        perform(["attest", selectedID, evidenceCheck, "--note=\(evidenceNote)"] + scope)
                         showEvidence = false
                     }
                     .buttonStyle(.borderedProminent)
@@ -238,12 +271,52 @@ struct SharedDeliveryView: View {
             .padding(22)
             .frame(width: 460)
         }
+        .sheet(isPresented: $showPreflight) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("配信前の事前確認").font(.title2.bold())
+                if let preflightReport {
+                    Text("\(preflightReport.app) · \(preflightReport.version)（ビルド \(preflightReport.build)）")
+                    Text("\(preflightReport.bundle) · \(preflightReport.track)").foregroundStyle(.secondary)
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 14) {
+                            ForEach(preflightReport.checks) { check in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    LabeledContent(check.title, value: check.status).font(.headline)
+                                    Text(check.message).textSelection(.enabled)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                if busy { ProgressView().controlSize(.small).accessibilityLabel("事前確認中") }
+                if let error = preflightError { Text(error).foregroundStyle(.red) }
+                HStack {
+                    if let preflightID, let preflightReport {
+                        Link("公式画面を開く", destination: preflightReport.console)
+                        Button("APIで読み取り照会") { perform(["preflight", preflightID, "--store"]) }
+                            .disabled(busy)
+                    }
+                    Spacer()
+                    Button("閉じる") { showPreflight = false }.keyboardShortcut(.cancelAction)
+                }
+            }
+            .padding(22)
+            .frame(width: 590, height: 520)
+        }
     }
 
     @ViewBuilder private func details(_ release: SharedRelease) -> some View {
         Text(release.app).font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
         Text("\(release.platformTitle)　\(release.version)（ビルド \(release.build)）")
             .foregroundStyle(.secondary)
+        Button("配信前の事前確認…") {
+            preflightID = release.id
+            preflightReport = nil
+            showPreflight = true
+            perform(["preflight", release.id])
+        }
+        .disabled(busy)
         if let testing = release.testing {
             TestingPane(testing: testing, releaseID: release.id, app: release.app, version: release.version,
                         build: release.build, busy: busy, save: perform)
@@ -356,6 +429,8 @@ struct SharedDeliveryView: View {
         }
         busy = true
         message = nil
+        let checkingPreflight = arguments[0] == "preflight"
+        if checkingPreflight { preflightError = nil }
         let script = Bundle.main.resourceURL?
             .appendingPathComponent("StoreGateTools/delivery/storegate.py").path ?? ""
         let folder = workspace.path
@@ -364,6 +439,11 @@ struct SharedDeliveryView: View {
             do {
                 let first = try await Task.detached { try Self.call(script, folder, arguments) }.value
                 let decoded = try JSONDecoder().decode(SharedResponse.self, from: first)
+                if checkingPreflight {
+                    preflightError = decoded.error
+                    if let result = decoded.preflight { preflightReport = result }
+                    return
+                }
                 if let onFinish {
                     if let error = decoded.error {
                         onFinish(error)
@@ -401,13 +481,22 @@ struct SharedDeliveryView: View {
                 }
             } catch {
                 let error = "配信エンジンを読み込めませんでした。Python 3と保存先を確認してください。"
-                if let onFinish { onFinish(error) } else { message = error }
+                if checkingPreflight {
+                    preflightError = error
+                } else if let onFinish {
+                    onFinish(error)
+                } else {
+                    message = error
+                }
             }
         }
     }
 
     private nonisolated static func call(_ script: String, _ folder: String, _ arguments: [String]) throws -> Data {
         let process = Process()
+        var environment = ProcessInfo.processInfo.environment
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        process.environment = environment
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["python3", script, "--workspace", folder] + arguments

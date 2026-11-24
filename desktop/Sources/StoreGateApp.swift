@@ -85,11 +85,7 @@ final class ReleaseStore: ObservableObject {
 @main
 struct StoreGateApp: App {
     @NSApplicationDelegateAdaptor(DeliveryApplicationDelegate.self) private var applicationDelegate
-    @StateObject private var sample = ReleaseStore(
-        stateURL: URL.applicationSupportDirectory
-            .appendingPathComponent("StoreGate Prototype", isDirectory: true)
-            .appendingPathComponent("release-progress.json")
-    )
+    @StateObject private var sample = ReleaseStore(stateURL: Self.sampleFile())
     @StateObject private var delivery = DeliveryStore(url: Self.workspaceFile())
     @StateObject private var onboarding = OnboardingStore(
         url: Self.workspaceFile().deletingLastPathComponent().appendingPathComponent("onboarding-state.json")
@@ -104,13 +100,29 @@ struct StoreGateApp: App {
                 .onAppear { applicationDelegate.store = delivery }
         }
         .defaultSize(width: 980, height: 690)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("プライバシーポリシー") {
+                    if let url = URL(string: "https://taigashinohara.github.io/StoreGate/desktop-privacy/") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            }
+        }
     }
 
     private static func workspaceFile() -> URL {
-        let directory = ProcessInfo.processInfo.environment["STOREGATE_WORKSPACE_DIR"]
-            .map { URL(fileURLWithPath: $0, isDirectory: true) }
-            ?? URL.applicationSupportDirectory.appendingPathComponent("StoreGate", isDirectory: true)
-        return directory.appendingPathComponent("delivery-workspace.json")
+        (isolatedDirectory ?? URL.applicationSupportDirectory.appendingPathComponent("StoreGate", isDirectory: true))
+            .appendingPathComponent("delivery-workspace.json")
+    }
+
+    private static func sampleFile() -> URL {
+        (isolatedDirectory ?? URL.applicationSupportDirectory.appendingPathComponent("StoreGate Prototype", isDirectory: true))
+            .appendingPathComponent("release-progress.json")
+    }
+
+    private static var isolatedDirectory: URL? {
+        ProcessInfo.processInfo.environment["STOREGATE_WORKSPACE_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
     }
 }
 

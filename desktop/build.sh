@@ -2,7 +2,7 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-build="$here/.build"
+build="${STOREGATE_DESKTOP_BUILD_DIR:-$here/.build}"
 bundle="$build/StoreGate.app"
 repo="$(dirname "$here")"
 mkdir -p "$build/ModuleCache"
@@ -50,7 +50,9 @@ case "${1:-}" in
     mkdir -p "$resources/scripts" "$resources/data" "$resources/delivery" "$resources/agent-os/hooks"
     build_icon
     cp "$here/Resources/audit_bridge.py" "$resources/"
-    cp "$repo/delivery/"{storegate,assets,builds,stores,apple_assets,testing}.py "$resources/delivery/"
+    cp "$repo/delivery/"{storegate,assets,builds,stores,apple_assets,testing,jdk,preflight}.py "$resources/delivery/"
+    cp "$here/Resources/PrivacyInfo.xcprivacy" "$bundle/Contents/Resources/"
+    python3 "$repo/scripts/validate-privacy-manifest.py" "$bundle/Contents/Resources/PrivacyInfo.xcprivacy"
     cp "$repo/agent-os/hooks/storegate-guard.sh" "$resources/agent-os/hooks/"
     cp "$repo/scripts/metadata-audit.py" "$repo/scripts/ruling-register.py" \
       "$repo/scripts/macos-source-audit.py" "$repo/scripts/validate-privacy-manifest.py" \

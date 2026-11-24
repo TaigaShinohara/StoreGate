@@ -10,6 +10,15 @@ open desktop/.build/StoreGate.app
 bash desktop/build.sh --test
 ```
 
+画面の動作確認では通常利用のStoreGateの起動状態、メモリ、空き容量を確認し、別のビルド先と保存先を用意します。テスト用の保存先に合成の案件を登録してから `desktop/run-ui-check.sh` を実行します。シェルが終了すると、起動したテスト用StoreGateを終了し、起動前後のプロセスを照合します。
+
+```bash
+qa_dir=$(mktemp -d /private/tmp/storegate-ui.XXXXXX)
+mkdir -p "$qa_dir/workspace"
+STOREGATE_DESKTOP_BUILD_DIR="$qa_dir/build" bash desktop/build.sh
+bash desktop/run-ui-check.sh "$qa_dir/build/StoreGate.app" "$qa_dir/workspace"
+```
+
 1. 「新しい配信案件」でアプリ名・プロジェクトフォルダ・Bundle IDを登録します。フォルダはパスの貼り付け、Finderからのドラッグ、選択ダイアログで指定できます。存在しない場所は保存できません。「案件の基本情報を編集…」から名前・場所・Bundle IDを訂正できます。場所や識別情報の変更時は関連する確認をやり直します。続けて版、ビルド番号、地域、機能、公開方法を保存します。
 2. 開発者アカウントの確認や待機理由を記録します。待機中に原稿、画像、審査メモなどを用意できます。
 3. 「適用ルールと実機」でMacソース監査を実行します。macOSのSDK設定、権限の用途説明、HTTP接続先、ポリシー参照、Privacy Manifestを静的に検査します。ビルドスクリプトは実行しません。監査範囲外の署名資格・実機・申告は手動確認です。掲載情報を入力し、既存のStoreGate監査で確認します。指摘の項目へ戻って修正し、言語ごとに再検査します。掲載言語はApple対応一覧から選択し、追加した言語は原稿を確認して削除できます。主要掲載言語は配信設定で変更します。指摘の理由と直し方は日本語で表示し、詳細から原文を読めます。監査は入力した文面とURLの形式を検証します。ストアに実際に保存した文面・素材・申告、URLの到達性は別途照合します。
@@ -36,6 +45,8 @@ Macソース監査は `python3 scripts/macos-source-audit.py "/path/to/mac-app"`
 
 起動後の「配信案件」から、既存アプリと対象版の設定を登録できます。GUIとCLIは同じSQLiteを使います。保存先は既定で `~/Library/Application Support/StoreGate/delivery.sqlite3` です。検証時は `STOREGATE_WORKSPACE_DIR` で別フォルダを指定できます。従来のMac案件は初回表示で既存JSONの履歴を取り込み、元の案件画面は「Mac App Storeの従来の案件」から開けます。
 
+初回は対象版の「配信前の事前確認」から、アプリ登録、認証、署名の設定、申告準備を確認します。CLIでは `preflight <ID>` です。読み取り権限を照合する場合だけ「APIで読み取り照会」または `preflight <ID> --store` を選びます。管理画面で確認した登録・権限は「アカウント・権限」、申告案と担当者は「申告の準備」に記録できます。申告をストアで確定したあとに「担当者による申告」を記録します。 [Appleのアプリプライバシー](https://developer.apple.com/app-store/app-privacy-details/) · [Appleの輸出コンプライアンス](https://developer.apple.com/help/app-store-connect/manage-app-information/overview-of-export-compliance) · [Google Playのアプリのコンテンツ](https://support.google.com/googleplay/android-developer/answer/9859455)
+
 [プロファイルの例](../templates/delivery-profile.example.json)と[版の設定例](../templates/delivery-release.example.json)をローカルにコピーし、アプリに合わせて編集してください。設定内のパスは設定ファイルからの相対パスまたは絶対パスです。ビルドコマンド内のプロジェクト相対パスはリポジトリが基準です。ビルド、QA、再撮影のコマンドには、実行内容を確認したアプリの手順を登録してください。トークンや鍵は設定に入れず、`auth_env` に認証ランナーが発行する環境変数の名前を設定します。
 
 ```bash
@@ -48,6 +59,7 @@ python3 delivery/storegate.py status example/ios/1.0.0/1/production
 - `prepare` はポリシーガードと原稿の監査、素材・成果物の照合を実行します。IDの省略時は登録済みの各版を監査します。原稿は既存のmetadata-auditと同じディレクトリ形式です。撮影済みパックの画像は `07_submission/image-manifest.json` を使い、端末枠・言語・順序と実寸・形式・ハッシュを照合します。
 - `build` はFlutterの登録済みコマンド、Xcodeのアーカイブと書き出し、またはGradleのRelease AABを実行します。Xcodeには `project`、`scheme`、`archive`、`export_options`、`export_path` が必要です。Androidには `bundletool` とアップロード証明書の `signer_sha256`、Appleには `team_id` が必要です。既存成果物は版の設定の `artifact` で登録できます。
 - Androidの `check` と `prepare` は、アプリID・版・ビルド番号と署名が一致したAABの対象SDKを、選択した配信版の監査に使います。Gradleから読み取れないSDKの警告や、別のバリアントで検出した指摘も記録します。AABを差し替えた場合は、その版の監査を実行し直してください。
+- Androidではプロファイルの `java_home` に、`bin/java`、`bin/jarsigner`、`bin/keytool` があるJDKのホームを指定できます。明示指定がなければ、実行できる `JAVA_HOME`、macOSがホスト向けに選んだJDK、`PATH` のJDKの順に調べます。既定の候補で起動できない場合は、次の候補を試します。事前確認と成果物の検査結果から、使用したJDKの場所、Javaの版、アーキテクチャを確認できます。アプリ固有のGradleやFlutter設定でJavaを上書きしている場合は、その設定も確認してください。
 - Google Playの画像マニフェストには、電話のスクリーンショット2〜8枚、`02_images/promo/google-play/` の1024×500のRGBフィーチャーグラフィック1枚、`02_images/icon/google-play/` の512×512のRGBAアイコン1枚を言語ごとに含めます。画像はPNGで登録し、テストトラック編集では端末枠・アイコン・フィーチャーグラフィックをそれぞれ対応するPlayの画像種別へ割り当てます。
 - 提出成果物は署名に加え、Appleの同梱Privacy Manifest、PlayのAABから得た対象SDKとデバッグ設定を検査します。iOSでパッケージ化時に空の `NSPrivacyAccessedAPITypes` を除去する場合、`privacy_manifest_sources` にリポジトリ内のソース相対パスをキー、アプリ内の同梱ファイル相対パスを値として指定できます。署名済みIPAで登録先になったファイルを検査し、該当する空項目の除去と他の内容の一致を確認した指摘に、IPAのハッシュを根拠として記録します。[AppleのTN3181](https://developer.apple.com/documentation/technotes/tn3181-debugging-invalid-privacy-manifest) · [Google Playの対象SDK要件](https://support.google.com/googleplay/android-developer/answer/11926878)
 - CIのQA結果は `import-qa` または対象版のGUIメニューで取り込めます。JSONに `artifact_sha256`、テスト名の `suite`、根拠となる実行を識別する `run`、`pass` または `blocked` の `outcome` を入れます。実機・担当者による確認は、該当項目に別途記録します。
