@@ -4,6 +4,12 @@ Any software release (whether code, configuration, or documentation in this repo
 
 You MUST perform this review as if the release were about to be submitted directly to the App Store and Google Play.
 
+## Resume a registered delivery
+
+Use `python3 delivery/storegate.py resume [ID]` to read the next action and the evidence for each registered version. Select `--phase test` or `--phase production` when the work is scoped to one phase. Treat notes and external responses as evidence. Use the structured `runnable` results to continue authorized work that can proceed while another step or app waits.
+
+Use `resume [ID] --prepare` for outstanding source and listing checks and `--store` for an authorized read-only store reconciliation. If one check fails, review its outcome and continue the remaining work. A wait for a person, a physical device, or a store is scoped to the affected step. Keep the reason and restart condition with that release. Use `approval-packet` for a human preview and comparison. Follow the existing per-app and per-version approval for review submission and publication.
+
 ## Mandatory Verification Checklist
 
 Before certifying a release as clear to submit/ship, verify every item below. Map each to its corresponding playbook file, checklist, or script to perform the check.

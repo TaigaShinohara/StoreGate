@@ -87,3 +87,20 @@ python3 delivery/storegate.py record-test "$release_id" installation --device '�
 python3 delivery/storegate.py record-test "$release_id" qa --device 'テスト端末' --operation 'PDFを取り込む' --source tester --outcome pass --note '合成PDFを追加し、ライブラリから開けた'
 python3 delivery/storegate.py test-status "$release_id"
 ~~~
+
+### 配信作業の再開と確認票
+
+案件を開くと、選択中の工程の担当、止まっている理由、再開条件が上に出ます。iOSではテスト配信と本番配信を切り替えられます。テストの必須条件は配信設定の `test_plan` に端末名と操作名の配列で登録します。すべての指定端末で対象版とビルドを照合し、指定操作の結果を確認すると、テスト工程が完了します。
+
+~~~bash
+python3 delivery/storegate.py resume
+python3 delivery/storegate.py resume "$release_id" --phase test --prepare --store
+python3 delivery/storegate.py resume "$release_id" --phase test --device 'テスト端末' --device-id '<端末ID>'
+python3 delivery/storegate.py approval-packet example/ios/1.0.0/1/production --action submit
+~~~
+
+- `resume` のJSONには工程別の `steps`、着手できる `runnable`、実行した確認の `progress` が出ます。IDを省くと登録済みの全案件を照合します。`--prepare` は未確認または再確認になったソース・掲載原稿の監査を進めます。登録されたビルドやアプリ固有のコマンドは、それぞれの操作から実行します。照会できない項目があっても、後続の確認や他の案件へ進みます。
+- `--store` は指定の工程・ビルドを読み取り照会します。端末照合は指定した端末で対象アプリの版とビルドを読み取り、確認元と時刻を保存します。参加・入手経路・操作結果の記録はテスト工程で確認します。端末IDは実行時の指定に使い、保存する履歴には端末名を使います。 [TestFlightのビルド状態](https://developer.apple.com/documentation/appstoreconnectapi/internalbetastate) · [Playのトラック配信API](https://developers.google.com/android-publisher/api-ref/rest/v3/applications.tracks.releases)
+- 本番の確認票には対象版、配信条件、ローカル原稿、掲載画像の順序とハッシュ、申告・QA、ストアの読み取り結果が表示されます。Google Playでは同じアプリ・版・ビルドのテストトラックの記録も表示します。「比較基準を保存」または `--baseline` で記録した内容と次回との差分を表示します。審査送信と本番公開は、対象版と操作内容を確認して個別に承認します。
+
+macOSでGUIの回帰確認を実行する場合は `bash desktop/check-delivery-ui.sh` を使います。合成案件で参加案内のコピー、入手不可からの再試行、QAの再記録、確認票の比較基準の保存を操作し、CLIで読み戻します。ビルド先を別ボリュームにする場合は `STOREGATE_UI_BUILD_ROOT` にそのフォルダを指定できます。

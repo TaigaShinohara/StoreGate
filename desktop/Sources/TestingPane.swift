@@ -128,6 +128,7 @@ struct TestingPane: View {
                         let text = "\(app) \(version)（ビルド \(build)）\n\(testing.channel)\n\(directions)\n\(invite)"
                         copied = NSPasteboard.general.setString(text, forType: .string)
                     }
+                    .storeGateCheckID("test-copy")
                     if copied { Text("コピー済み").foregroundStyle(.secondary) }
                 }
             }
@@ -141,6 +142,7 @@ struct TestingPane: View {
                     Button("記録…") { edit = .observation(stage, nil) }
                         .accessibilityLabel("\(stage.title)を記録")
                         .disabled(stage == .qa && testing.installedDevices.isEmpty)
+                        .storeGateCheckID("test-stage-\(stage.rawValue)")
                 }
                 ForEach(items) { item in
                     observation(item, inHistory: false)
@@ -180,12 +182,14 @@ struct TestingPane: View {
                 }
                 if !inHistory {
                     Button("再記録…") { edit = .observation(item.stage, item) }
+                        .storeGateCheckID("test-rerecord-\(item.id)")
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } label: {
             Label(title, systemImage: item.symbol)
         }
+        .storeGateCheckID("test-observation-\(item.id)")
     }
 }
 
@@ -245,8 +249,10 @@ private struct TestEntrySheet: View {
                             ForEach(installedDevices, id: \.self) { Text($0).tag($0) }
                         }
                         TextField("操作名", text: $operation, prompt: Text("例　PDFの取り込み"))
+                            .storeGateCheckID("test-operation")
                     } else if stage != .distribution {
                         TextField("端末名", text: $device, prompt: Text("例　テスト用iPhone"))
+                            .storeGateCheckID("test-device")
                     }
                     Picker("結果", selection: $outcome) {
                         Text("確認済み").tag("pass")
@@ -268,6 +274,7 @@ private struct TestEntrySheet: View {
                         }
                     }
                     TextField("結果の根拠", text: $note, axis: .vertical).lineLimit(2...4)
+                        .storeGateCheckID("test-note")
                 }
                 .formStyle(.columns)
             } else {
@@ -288,6 +295,7 @@ private struct TestEntrySheet: View {
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
                     .disabled(!canSave)
+                    .storeGateCheckID("test-save")
             }
             .disabled(busy)
         }
