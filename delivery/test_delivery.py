@@ -210,6 +210,11 @@ class DeliveryTests(unittest.TestCase):
             checks = {entry["name"]: entry["state"] for entry in status["checks"]}
             self.assertEqual(checks["device"], "pending")
             self.assertNotIn("qa", checks)
+            revised = observe_test("qa", "pass", "tester", "Opened after retry", "--device", "Phone",
+                                   "--operation", "Open after restart")["testing"]
+            self.assertEqual(revised["stages"]["qa"][0]["note"], "Opened after retry")
+            self.assertEqual(revised["stages"]["qa"][0]["build_source"], "store")
+            self.assertEqual(revised["history"][0]["note"], "PDF absent")
             observe_test("installation", "blocked", "tester", "Store app no longer installed", "--device", "Phone")
             self.assertFalse(cli("status")["testing"]["stages"]["qa"])
             self.assertIsNone(cli("test-link", "--clear")["testing"]["invite"])

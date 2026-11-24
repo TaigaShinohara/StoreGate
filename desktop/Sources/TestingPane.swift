@@ -306,9 +306,12 @@ private struct TestEntrySheet: View {
         guard let stage else { return ["test-link", releaseID, "--url", trim(url)] }
         var result = ["record-test", releaseID, stage.rawValue, "--outcome", outcome, "--source", source.rawValue,
                       "--note=\(trim(note))"]
-        let fields = [("device", device), ("operation", operation), ("os", os), ("version", version), ("build", build)]
+        var fields = [("device", device), ("operation", operation)]
+        if stage == .installation {
+            fields += [("os", os), ("version", version), ("build", build)]
+            if !trim(build).isEmpty { result += ["--build-source", buildSource.rawValue] }
+        }
         result += fields.filter { !trim($0.1).isEmpty }.map { "--\($0.0)=\(trim($0.1))" }
-        if !trim(build).isEmpty { result += ["--build-source", buildSource.rawValue] }
         return result
     }
 
