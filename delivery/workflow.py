@@ -198,11 +198,12 @@ def workflows(release, state, readbacks):
     if release["track"] == "production":
         phases["production"] = production_steps(release, state, readbacks.get("production_store", {}))
     default = "test" if "test" in phases and phases["test"][0]["state"] != "complete" else next(reversed(phases), None)
-    pending = pending_audits(release, state)
-    return {"default_phase": default, "phases": phases, "pending_audits": pending}
+    return {"default_phase": default, "phases": phases,
+            "pending_audits": pending_audits(release, state, ("pending", "stale", "not_checked")),
+            "automatic_audits": pending_audits(release, state, ("pending", "stale"))}
 
 
-def pending_audits(release, state):
+def pending_audits(release, state, retryable):
     metadata = release.get("metadata")
-    return [item["name"] for item in state["checks"] if item["state"] in ("pending", "stale")
+    return [item["name"] for item in state["checks"] if item["state"] in retryable
             and (item["name"] == "source" or item["name"] == "metadata" and metadata and Path(metadata).is_dir())]

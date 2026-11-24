@@ -95,7 +95,7 @@ private struct SharedRelease: Decodable, Identifiable, Sendable {
     var platformTitle: String {
         switch platform {
         case "ios": "iPhone・iPad"
-        case "android": "Google Play"
+        case "android": track.map { "Google Play · \($0 == "production" ? "本番" : $0)" } ?? "Google Play"
         default: "Mac App Store"
         }
     }

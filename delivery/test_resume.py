@@ -110,6 +110,18 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(len(plan["runnable"]), 1)
         self.assertIn("--prepare", plan["runnable"][0]["command"])
 
+    def test_failed_audit_can_be_retried_explicitly_without_automatic_retry_loop(self):
+        release = self.release("android", "internal")
+        with patch("storegate.audit_source", side_effect=subprocess.TimeoutExpired("fixture", 10)):
+            first = self.resume(release, prepare=True)
+        self.assertEqual(next(check["state"] for check in first["checks"] if check["name"] == "source"), "not_checked")
+        plan = self.resume(release)
+        self.assertEqual(plan["workflow"]["pending_audits"], ["source"])
+        self.assertEqual(plan["runnable"], [])
+        with patch("storegate.audit_source") as restored:
+            self.assertEqual(self.resume(release, prepare=True)["progress"], [{"check": "source", "outcome": "checked"}])
+            restored.assert_called_once()
+
     def test_test_complete_requires_identity_even_after_qa_passes(self):
         release = self.release("android", "internal", test_plan={"Phone": ["Open PDF"]})
         self.observe(release, "distribution", device=None, source="store")

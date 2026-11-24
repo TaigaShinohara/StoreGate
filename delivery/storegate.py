@@ -845,7 +845,7 @@ def resume_release(db, profile, release, args):
     steps = workflow["phases"][phase]
     runnable = list({tuple(item["command"]): item for item in steps
                      if item["owner"] == "ai" and item["state"] == "ready"}.values())
-    if phase == "test" and workflow["pending_audits"] and not args.prepare:
+    if phase == "test" and workflow["automatic_audits"] and not args.prepare:
         runnable.append({"code": "local_audits", "title": "未確認の監査", "owner": "ai", "state": "ready",
                          "command": ["resume", release["id"], "--phase", phase, "--prepare"]})
     if any(item["check"] in ("source", "metadata") and item["outcome"] == "unconfirmed" for item in progress):
