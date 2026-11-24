@@ -84,11 +84,13 @@ private struct SharedRelease: Decodable, Identifiable, Sendable {
     let regions: [String]?
     let next: String?
     let phase: String?
-    let checks: [SharedCheck]?
+    var checks: [SharedCheck]?
     let images: [SharedImage]?
     let console: URL?
     let operations: [SharedOperation]?
     var testing: SharedTesting?
+    var workflow: ReleaseHandoff?
+    var readbacks: ReleaseReadbacks?
 
     var platformTitle: String {
         switch platform {
@@ -111,6 +113,22 @@ private struct SharedResponse: Decodable, Sendable {
     let checks: [SharedCheck]?
     let testing: SharedTesting?
     let preflight: SharedPreflight?
+    let resume: Resumed?
+    let approval_packet: ReleaseApprovalPacket?
+    let test_workflow: [HandoffStep]?
+
+    struct Resumed: Decodable, Sendable {
+        let id: String
+        let workflow: ReleaseHandoff?
+        let readbacks: ReleaseReadbacks?
+        let checks: [SharedCheck]?
+        let local_issue: String?
+        let message: String?
+        let progress: [Progress]?
+        struct Progress: Decodable, Sendable {
+            let message: String?
+        }
+    }
 }
 
 private struct SharedPreflight: Decodable, Sendable {
@@ -157,6 +175,20 @@ struct SharedDeliveryView: View {
     @State private var preflightReport: SharedPreflight?
     @State private var showPreflight = false
     @State private var preflightError: String?
+    @State private var selectedPhase: String?
+    @State private var deviceRead: DeviceRead?
+    @State private var deviceAlias = ""
+    @State private var deviceIdentifier = ""
+    @State private var packetID: String?
+    @State private var packetAction = "submit"
+    @State private var packetReport: ReleaseApprovalPacket?
+    @State private var packetError: String?
+    @State private var showPacket = false
+
+    private struct DeviceRead: Identifiable {
+        let id: String
+        let phase: String
+    }
 
     private struct Approval: Identifiable {
         var id: String { digest }
@@ -182,6 +214,7 @@ struct SharedDeliveryView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         .tag(release.id)
+                        .storeGateCheckID("release-\(release.id)")
                     }
                     if !legacy.isEmpty {
                         Section("既存のMac App Store案件") {
@@ -220,6 +253,7 @@ struct SharedDeliveryView: View {
             .frame(minWidth: 485, maxWidth: .infinity, maxHeight: .infinity)
         }
         .task { perform(["list"]) }
+        .onChange(of: selectedID) { _, _ in selectedPhase = nil }
         .sheet(item: $pending) { item in
             VStack(alignment: .leading, spacing: 12) {
                 Text(item.arguments[0] == "submit" ? "審査送信の内容を確認" : "本番公開の内容を確認").font(.title2.bold())
@@ -304,17 +338,108 @@ struct SharedDeliveryView: View {
             .padding(22)
             .frame(width: 590, height: 520)
         }
+        .sheet(item: $deviceRead) { item in
+            VStack(alignment: .leading, spacing: 12) {
+                Text("接続端末の版を照合").font(.headline)
+                TextField("記録に使う端末名", text: $deviceAlias)
+                TextField("adbまたはdevicectlの端末ID", text: $deviceIdentifier)
+                HStack {
+                    Button("キャンセル", role: .cancel) { deviceRead = nil }
+                    Spacer()
+                    Button("読み取って保存") {
+                        deviceRead = nil
+                        perform(["resume", item.id, "--phase", item.phase,
+                                 "--device=\(deviceAlias)", "--device-id=\(deviceIdentifier)"])
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(deviceAlias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                              deviceIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .padding(22)
+            .frame(width: 490)
+        }
+        .sheet(isPresented: $showPacket) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("本番の確認票").font(.title2.bold())
+                Picker("確認する操作", selection: $packetAction) {
+                    Text("審査送信").tag("submit")
+                    Text("本番公開").tag("publish")
+                }
+                .pickerStyle(.segmented)
+                .disabled(busy)
+                .onChange(of: packetAction) { _, _ in
+                    packetReport = nil
+                    loadPacket()
+                }
+                if let packetReport {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) { ApprovalPacketBody(packet: packetReport) }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .storeGateCheckID("packet-content")
+                }
+                if let packetError { Text(packetError).foregroundStyle(.red) }
+                if busy { ProgressView().controlSize(.small).accessibilityLabel("確認票を作成中") }
+                HStack {
+                    Button("比較基準を保存") { loadPacket(baseline: true) }
+                        .disabled(busy || packetReport == nil)
+                        .storeGateCheckID("packet-baseline")
+                    Spacer()
+                    Button("閉じる") { showPacket = false }.keyboardShortcut(.cancelAction)
+                }
+            }
+            .padding(22)
+            .frame(width: 650, height: 560)
+        }
     }
 
     @ViewBuilder private func details(_ release: SharedRelease) -> some View {
         Text(release.app).font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
         Text("\(release.platformTitle)　\(release.version)（ビルド \(release.build)）")
             .foregroundStyle(.secondary)
-        Button("配信前の事前確認…") {
-            preflightID = release.id
-            preflightReport = nil
-            showPreflight = true
-            perform(["preflight", release.id])
+        if let workflow = release.workflow, let phase = selectedPhase ?? workflow.default_phase {
+            if workflow.phases.count > 1 {
+                Picker("工程", selection: Binding(get: { phase }, set: { selectedPhase = $0 })) {
+                    Text("テスト配信").tag("test")
+                    Text("本番配信").tag("production")
+                }
+                .pickerStyle(.segmented)
+            }
+            ResumePane(steps: workflow.phases[phase] ?? [], history: release.readbacks?.history ?? [])
+            HStack {
+                Button("未確認の監査を進める") { perform(["resume", release.id, "--phase", phase, "--prepare"]) }
+                    .disabled(workflow.pending_audits.isEmpty)
+                Button("ストアを読み取り照会") { perform(["resume", release.id, "--phase", phase, "--store"]) }
+                if release.platform != "macos" {
+                    Button("端末の版を照合…") {
+                        deviceAlias = ""
+                        deviceIdentifier = ""
+                        deviceRead = DeviceRead(id: release.id, phase: phase)
+                    }
+                }
+            }
+            .disabled(busy)
+        } else {
+            Text(release.next ?? "").font(.headline)
+        }
+        HStack {
+            Button("配信前の事前確認…") {
+                preflightID = release.id
+                preflightReport = nil
+                showPreflight = true
+                perform(["preflight", release.id])
+            }
+            if release.track == "production" {
+                Button("本番の確認票…") {
+                    packetID = release.id
+                    packetAction = "submit"
+                    packetReport = nil
+                    showPacket = true
+                    loadPacket()
+                }
+                .storeGateCheckID("approval-packet")
+            }
         }
         .disabled(busy)
         if let testing = release.testing {
@@ -323,12 +448,10 @@ struct SharedDeliveryView: View {
                 .id(release.id)
             Divider()
         }
-        Text(release.next ?? "").font(.headline)
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Button("監査・準備") { perform(["prepare", release.id]) }.buttonStyle(.borderedProminent)
                 Button("ビルド") { perform(["build", release.id]) }
-                Button("ストア照会") { perform(["store-status", release.id]) }
                 Button("確認を記録…") {
                     evidenceCheck = "account"
                     evidenceNote = ""
@@ -337,6 +460,7 @@ struct SharedDeliveryView: View {
             }
             HStack {
                 Menu("対象版の操作") {
+                    Button("審査・公開履歴を照合") { perform(["store-status", release.id]) }
                     Button("実機QAを実行") { perform(["qa", release.id]) }
                     Button("CIのQA結果を取り込む…") { importFile(command: "import-qa", releaseID: release.id) }
                     Button("再撮影") { perform(["capture", release.id]) }
@@ -430,7 +554,9 @@ struct SharedDeliveryView: View {
         busy = true
         message = nil
         let checkingPreflight = arguments[0] == "preflight"
+        let checkingPacket = arguments[0] == "approval-packet"
         if checkingPreflight { preflightError = nil }
+        if checkingPacket { packetError = nil }
         let script = Bundle.main.resourceURL?
             .appendingPathComponent("StoreGateTools/delivery/storegate.py").path ?? ""
         let folder = workspace.path
@@ -444,11 +570,34 @@ struct SharedDeliveryView: View {
                     if let result = decoded.preflight { preflightReport = result }
                     return
                 }
+                if checkingPacket {
+                    packetError = decoded.error
+                    if let report = decoded.approval_packet { packetReport = report }
+                    return
+                }
+                if arguments[0] == "resume" {
+                    message = decoded.error ?? decoded.resume?.local_issue ?? decoded.resume?.message
+                        ?? decoded.resume?.progress?.compactMap(\.message).first
+                    if let result = decoded.resume, let index = releases.firstIndex(where: { $0.id == result.id }) {
+                        releases[index].workflow = result.workflow
+                        releases[index].readbacks = result.readbacks
+                        releases[index].checks = result.checks
+                    }
+                    return
+                }
                 if let onFinish {
                     if let error = decoded.error {
                         onFinish(error)
                     } else if let testing = decoded.testing, let index = releases.firstIndex(where: { $0.id == arguments[1] }) {
                         releases[index].testing = testing
+                        if let testSteps = decoded.test_workflow {
+                            releases[index].workflow?.phases["test"] = testSteps
+                            if testSteps.first?.state == "complete", releases[index].track == "production" {
+                                releases[index].workflow?.default_phase = "production"
+                            } else {
+                                releases[index].workflow?.default_phase = "test"
+                            }
+                        }
                         onFinish(nil)
                     } else {
                         onFinish("テストの保存結果を読み込めませんでした。")
@@ -483,6 +632,8 @@ struct SharedDeliveryView: View {
                 let error = "配信エンジンを読み込めませんでした。Python 3と保存先を確認してください。"
                 if checkingPreflight {
                     preflightError = error
+                } else if checkingPacket {
+                    packetError = error
                 } else if let onFinish {
                     onFinish(error)
                 } else {
@@ -490,6 +641,12 @@ struct SharedDeliveryView: View {
                 }
             }
         }
+    }
+
+    private func loadPacket(baseline: Bool = false) {
+        guard let packetID else { return }
+        let suffix = baseline ? ["--baseline"] : []
+        perform(["approval-packet", packetID, "--action", packetAction] + suffix)
     }
 
     private nonisolated static func call(_ script: String, _ folder: String, _ arguments: [String]) throws -> Data {

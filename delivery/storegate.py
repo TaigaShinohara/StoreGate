@@ -17,11 +17,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from assets import PLAY_COUNTS, SLOTS, inspect_images
+from approval import changes_since, packet_sections
 from builds import (build_commands, build_host, digest, file_identity, git_source, lock,
                     manifest_digest, run, tree_digest)
 from jdk import resolve_jdk
 from preflight import build_inputs, local_checks, probe_store, signing_inputs
+from readback import device_readback, store_readback
 from testing import TEST_STAGES, save_observation, test_progress, validate_invite
+from workflow import test_steps, workflows
 
 ROOT = Path(__file__).resolve().parents[1]
 STORES = {"ios": ("App Store Connect", "https://appstoreconnect.apple.com/apps"),
@@ -138,7 +141,7 @@ def profile_from(source):
 
 def release_from(source, profile):
     value = json.loads(source.read_text())
-    fields_only(value, "app platform version build track pack artifact artifact_pattern metadata regions price purchases publication first")
+    fields_only(value, "app platform version build track pack artifact artifact_pattern metadata regions price purchases publication first test_plan")
     if value["app"] != profile["id"]:
         raise ValueError("配信設定のアプリが一致しません。")
     target = profile["targets"][value["platform"]]
@@ -151,6 +154,16 @@ def release_from(source, profile):
             raise ValueError("初回・支援購入には true または false を指定してください。")
     if value.get("publication") not in (None, "manual", "automatic"):
         raise ValueError("公開方式を確認してください。")
+    if "test_plan" in value:
+        plan = value["test_plan"]
+        if (not isinstance(plan, dict) or not plan or
+                (value["platform"] != "ios" and (value["platform"] != "android" or track == "production")) or
+                any(not isinstance(device, str) or not device.strip() or device != device.strip() or
+                    not isinstance(operations, list) or not operations or
+                    any(not isinstance(operation, str) or not operation.strip() or operation != operation.strip()
+                        for operation in operations) or len(set(operations)) != len(operations)
+                    for device, operations in plan.items())):
+            raise ValueError("test_plan には必須の端末名と重複のない操作名の配列を指定してください。")
     regions = value.get("regions", [])
     if not isinstance(regions, list) or any(not re.fullmatch(r"[A-Z]{2}", region) for region in regions):
         raise ValueError("配信地域には二文字の地域コードを指定してください。")
@@ -192,6 +205,12 @@ def database(folder):
             );
             CREATE INDEX IF NOT EXISTS test_observations_scope
                 ON test_observations(release, scope, stage, device, operation, id);
+            CREATE TABLE IF NOT EXISTS readbacks (
+                id INTEGER PRIMARY KEY, release TEXT NOT NULL REFERENCES releases(id), scope TEXT NOT NULL,
+                kind TEXT NOT NULL, subject TEXT NOT NULL, data TEXT NOT NULL, time TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS readbacks_release_scope
+                ON readbacks(release, scope, kind, subject, id);
         """)
         yield db
 
@@ -318,6 +337,49 @@ def testing_section(db, target, release):
     return {"testing": testing_status(db, target, release, scope)} if scope else {}
 
 
+def readback_scope(target):
+    return fingerprint([target["platform"], target["bundle"], target.get("store_id"),
+                        target.get("provider"), target.get("auth_env")])
+
+
+def saved_readbacks(db, target, release):
+    scope = readback_scope(target)
+    current = {"devices": {}}
+    query = """SELECT kind,subject,data,time FROM readbacks WHERE release=? AND scope=?
+               AND id IN (SELECT MAX(id) FROM readbacks WHERE release=? AND scope=? GROUP BY kind,subject)"""
+    for row in db.execute(query, (release["id"], scope, release["id"], scope)):
+        detail = {"observed_at": row["time"], **json.loads(row["data"])}
+        if row["kind"] == "device":
+            current["devices"][row["subject"]] = detail
+        else:
+            current[row["kind"]] = detail
+    current["history"] = [
+        {"id": row["id"], "kind": row["kind"], "subject": row["subject"], "observed_at": row["time"],
+         **json.loads(row["data"])}
+        for row in db.execute("SELECT * FROM readbacks WHERE release=? AND scope=? ORDER BY id DESC LIMIT 20",
+                              (release["id"], scope))
+    ]
+    return current
+
+
+def save_readback(db, target, release, kind, subject, result):
+    with db:
+        db.execute("INSERT INTO readbacks (release,scope,kind,subject,data,time) VALUES (?,?,?,?,?,?)",
+                   (release["id"], readback_scope(target), kind, subject, encoded(result), now()))
+
+
+def attach_workflow(db, target, release, state):
+    readbacks = saved_readbacks(db, target, release)
+    state.update(readbacks=readbacks, workflow=workflows(release, state, readbacks))
+    return state
+
+
+def incomplete_snapshot(db, target, release, message):
+    state = {"checks": [finding("source", "not_checked", message)], "regions": release.get("regions", []),
+             "can_run_qa": False, **testing_section(db, target, release)}
+    return attach_workflow(db, target, release, state)
+
+
 def snapshot(db, profile, release):
     target = profile["targets"][release["platform"]]
     images, problems = inspect_images(release.get("pack"), target["platform"], target["locales"],
@@ -367,12 +429,14 @@ def snapshot(db, profile, release):
     blocked = next((item["message"] for item in stages if item["state"] != "pass"), None)
     if publication and publication["state"] == "pass":
         blocked = "予定地域で対象版の公開を確認しました。"
-    return {"id": release["id"], "app": profile["name"], "platform": target["platform"], "store": store,
+    state = {"id": release["id"], "app": profile["name"], "platform": target["platform"], "store": store,
             "console": console, "bundle": target["bundle"], "store_id": target.get("store_id"),
             "version": release["version"], "build": release["build"], "track": release["track"],
             "regions": release.get("regions", []), "images": images, "checks": stages, "operations": operations,
+            "can_run_qa": bool(target.get("qa_command")),
             "next": blocked or "対象版のストア状態を照会してください。",
-            **testing_section(db, target, release)}, keys
+            **testing_section(db, target, release)}
+    return attach_workflow(db, target, release, state), keys
 
 
 def expand(argv, release):
@@ -437,6 +501,12 @@ def audit(db, profile, release):
         except ValueError as exc:
             outcome, message = "blocked", str(exc)
         record(db, release, "build_preflight", keys["build_preflight"], outcome, {"message": message})
+    audit_source(db, profile, release, target, artifact, keys["source"])
+    if release.get("metadata"):
+        audit_metadata(db, release, target, keys["metadata"])
+
+
+def audit_source(db, profile, release, target, artifact, key):
     command = ["bash", str(ROOT / "agent-os/hooks/storegate-guard.sh"), profile["repo"], "--platform", release["platform"]]
     sdk_evidence = {}
     if target["platform"] == "android" and artifact["state"] == "pass" and artifact.get("format") == ".aab":
@@ -455,14 +525,16 @@ def audit(db, profile, release):
         text = f"署名済みIPAでPrivacy Manifestの修正を {resolved_count} 件確認しました。\n" + text
     if sdk_evidence:
         text = f"署名済みAABの対象SDKはAPI {artifact['sdk']}です。Gradleの静的検査結果も記録しています。\n" + text
-    record(db, release, "source", keys["source"], result,
+    record(db, release, "source", key, result,
            {"message": text or "ガードの実行結果を確認してください。", "findings": findings, **sdk_evidence})
-    if release.get("metadata"):
-        cmd = [sys.executable, str(ROOT / "scripts/metadata-audit.py"), release["metadata"],
-               "--platform", "google" if target["platform"] == "android" else "apple", "--check-urls"]
-        meta = run(cmd, timeout=240)
-        record(db, release, "metadata", keys["metadata"], "blocked" if meta.returncode else "pass",
-               {"message": meta.stdout.decode(errors="replace").strip() or "掲載原稿の監査結果を確認してください。"})
+
+
+def audit_metadata(db, release, target, key):
+    cmd = [sys.executable, str(ROOT / "scripts/metadata-audit.py"), release["metadata"],
+           "--platform", "google" if target["platform"] == "android" else "apple", "--check-urls"]
+    meta = run(cmd, timeout=240)
+    record(db, release, "metadata", key, "blocked" if meta.returncode else "pass",
+           {"message": meta.stdout.decode(errors="replace").strip() or "掲載原稿の監査結果を確認してください。"})
 
 
 def build(db, profile, release):
@@ -519,7 +591,7 @@ def list_releases(db):
                      "next": str(exc), "checks": [], "images": []}
             target = profile["targets"].get(release["platform"]) if profile else None
             if target:
-                state.update(testing_section(db, target, release))
+                state.update(incomplete_snapshot(db, target, release, str(exc)))
                 state["console"] = STORES[release["platform"]][1]
         registered.append(state)
     legacy = []
@@ -555,7 +627,7 @@ def save_operation(db, release, action, digest, state, data):
                    (release["id"], action, digest, state, encoded(data), now()))
 
 
-def dispatch_store(db, release, action, adapter, state=None, keys=None, approval=None):
+def dispatch_store(db, release, action, adapter, state=None, keys=None, approval=None, target=None):
     from stores import StoreError
 
     remote = adapter.status(release)
@@ -588,6 +660,9 @@ def dispatch_store(db, release, action, adapter, state=None, keys=None, approval
     artifact = next((item for item in state["checks"] if item["name"] == "artifact"), None)
     if artifact:
         summary["artifact_sha256"] = artifact.get("sha256")
+    if target is not None:
+        sections = packet_sections(release, target, state, {}, action, keys["metadata"])
+        summary["approval_packet_sha256"] = fingerprint(sections)
     confirmation = fingerprint(summary)
     if approval is None:
         return {"state": "confirmation_required", "confirmation": confirmation, "summary": summary}
@@ -682,6 +757,85 @@ def verify_publication(db, profile, release):
     return {"state": "verified" if outcome == "pass" else "unconfirmed", **evidence}
 
 
+def approval_packet(db, profile, release, action, save_baseline):
+    if release["track"] != "production":
+        raise ValueError("本番トラックの対象版で確認票を開いてください。")
+    state, keys = snapshot(db, profile, release)
+    target = profile["targets"][release["platform"]]
+    sections = packet_sections(release, target, state, state["readbacks"], action, keys["metadata"])
+    name = "approval-packet-" + action
+    previous = observe(db, release, name, readback_scope(target), "")
+    if save_baseline:
+        recorded_at = now()
+        record(db, release, name, readback_scope(target), "saved",
+               {"message": "", "sections": sections, "recorded_at": recorded_at})
+        previous = {"sections": sections, "recorded_at": recorded_at}
+    return {"approval_packet": {"action": action, "sections": sections,
+                                "baseline_at": previous.get("recorded_at"),
+                                "changes": changes_since(previous.get("sections"), sections)}}
+
+
+def resume_release(db, profile, release, args):
+    target = profile["targets"][release["platform"]]
+    platform = target["platform"]
+    if args.device and (platform not in ("ios", "android") or not args.device.strip() or len(args.device.strip()) > 120
+                        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:%\[\]-]{0,255}", args.device_id)):
+        raise ValueError("対象プラットフォームと端末の表示名、端末IDを確認してください。")
+    local_issue = None
+    try:
+        state, keys = snapshot(db, profile, release)
+    except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
+        local_issue = str(exc) if isinstance(exc, ValueError) else "ローカルの配信設定・ソースを確認してください。"
+        state = incomplete_snapshot(db, target, release, local_issue)
+    phase = args.phase or state["workflow"]["default_phase"]
+    if phase not in state["workflow"]["phases"]:
+        return {"resume": {"id": release["id"], "phase": phase, "state": "skipped",
+                            "message": "この版は指定した工程の対象外です。"}}
+    progress = []
+    if args.store:
+        result = store_readback(target, release, phase)
+        save_readback(db, target, release, phase + "_store", "", result)
+        progress.append({"check": "store", "outcome": result["outcome"]})
+    if args.device:
+        alias = args.device.strip()
+        result = device_readback(target, release, args.device_id)
+        save_readback(db, target, release, "device", alias, result)
+        progress.append({"check": "device", "outcome": result["outcome"], "device": alias})
+    selected = []
+    if args.prepare and local_issue is None:
+        selected = state["workflow"]["pending_audits"]
+        for name in selected:
+            try:
+                if name == "source":
+                    artifact = next(item for item in state["checks"] if item["name"] == "artifact")
+                    audit_source(db, profile, release, target, artifact, keys[name])
+                else:
+                    audit_metadata(db, release, target, keys[name])
+                progress.append({"check": name, "outcome": "checked"})
+            except (ValueError, OSError, subprocess.TimeoutExpired):
+                progress.append({"check": name, "outcome": "unconfirmed",
+                                 "message": "この確認を完了できませんでした。設定とツールを確認してください。"})
+    if selected:
+        try:
+            state, _ = snapshot(db, profile, release)
+        except (ValueError, OSError, subprocess.TimeoutExpired):
+            local_issue = "ローカルの準備結果を読み戻せません。配信設定・ソースを確認してください。"
+            attach_workflow(db, target, release, state)
+    else:
+        attach_workflow(db, target, release, state)
+    workflow = state["workflow"]
+    steps = workflow["phases"][phase]
+    runnable = [item for item in steps if item["owner"] == "ai" and item["state"] == "ready"]
+    if phase == "test" and workflow["pending_audits"] and not args.prepare:
+        runnable.append({"code": "local_audits", "title": "未確認の監査", "owner": "ai", "state": "ready",
+                         "command": ["resume", release["id"], "--phase", phase, "--prepare"]})
+    if any(item["check"] in ("source", "metadata") and item["outcome"] == "unconfirmed" for item in progress):
+        runnable = [item for item in runnable if "--prepare" not in item["command"]]
+    return {"resume": {"id": release["id"], "phase": phase, "state": steps[0]["state"], "steps": steps,
+                       "progress": progress, "workflow": workflow, "readbacks": state["readbacks"],
+                       "checks": state["checks"], "runnable": runnable, "local_issue": local_issue}}
+
+
 def parse():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", type=Path, default=workspace())
@@ -697,6 +851,17 @@ def parse():
     precheck = commands.add_parser("preflight", help="配布設定を診断し、初回に必要な確認を表示する")
     precheck.add_argument("id")
     precheck.add_argument("--store", action="store_true", help="対象ストアを読み取り照会する")
+    resume = commands.add_parser("resume", help="進捗を照合して、続けられる作業と待機条件を表示する")
+    resume.add_argument("id", nargs="?")
+    resume.add_argument("--phase", choices=("test", "production"))
+    resume.add_argument("--prepare", action="store_true", help="未確認・再確認のソースと原稿を監査する")
+    resume.add_argument("--store", action="store_true", help="対象ストアを読み取り照会する")
+    resume.add_argument("--device", help="保存する端末の表示名。テスト計画の端末名と同じ名前を使う")
+    resume.add_argument("--device-id", help="adbまたはdevicectlで指定する端末ID")
+    packet = commands.add_parser("approval-packet", help="対象版の承認用確認票を作る")
+    packet.add_argument("id")
+    packet.add_argument("--action", choices=("submit", "publish"), default="submit")
+    packet.add_argument("--baseline", action="store_true", help="現在の確認票を差分比較用に保存する")
     commands.add_parser("test-status", help="対象版のテストの記録を表示する").add_argument("id")
     invite = commands.add_parser("test-link", help="対象版のテスト参加リンクを記録する")
     invite.add_argument("id")
@@ -747,6 +912,18 @@ def import_qa(db, profile, release, path):
 
 def execute(folder, db, args):
     command = args.command
+    if command == "resume":
+        if bool(args.device) != bool(args.device_id) or (args.device and not args.id):
+            raise ValueError("端末を照合する場合は、対象版、端末名と端末IDを指定してください。")
+        if not args.id:
+            batch = []
+            for row in list(db.execute("SELECT id FROM releases ORDER BY id")):
+                try:
+                    batch.append(execute(folder, db, argparse.Namespace(**{**vars(args), "id": row["id"]}))["resume"])
+                except (ValueError, KeyError, TypeError, AttributeError, OSError, subprocess.TimeoutExpired) as exc:
+                    message = str(exc) if isinstance(exc, ValueError) else "案件の登録・設定を確認してください。"
+                    batch.append({"id": row["id"], "state": "unconfirmed", "message": message})
+            return {"releases": batch}
     if command == "migrate":
         return {"imported": migrate(db, folder / "delivery-workspace.json")}
     if command == "list":
@@ -791,6 +968,10 @@ def execute(folder, db, args):
         release = fetch(db, "releases", args.id)
         profile = fetch(db, "profiles", release["app"])
         target = profile["targets"][release["platform"]]
+        if command == "resume":
+            return resume_release(db, profile, release, args)
+        if command == "approval-packet":
+            return approval_packet(db, profile, release, args.action, args.baseline)
         if command == "preflight":
             return preflight(db, profile, release, args.store)
         if command in ("test-link", "record-test"):
@@ -802,7 +983,8 @@ def execute(folder, db, args):
                 record(db, release, "test-invite", scope, "pass", {"message": "", "url": url})
             else:
                 save_observation(db, release, scope, args, now())
-            return {"testing": testing_status(db, target, release, scope)}
+            testing = testing_status(db, target, release, scope)
+            return {"testing": testing, "test_workflow": test_steps(release, testing, saved_readbacks(db, target, release))}
         if command in ("check", "prepare"):
             audit(db, profile, release)
             return snapshot(db, profile, release)[0]
@@ -911,7 +1093,7 @@ def execute(folder, db, args):
             if remote.get("build") != release["build"] or remote["state"] not in {"PREPARE_FOR_SUBMISSION", "READY_FOR_REVIEW"}:
                 raise ValueError("App Store Connectで対象版とビルドの下書きを確認してください。")
             return {"draft": adapter.review_draft(remote, create=True)}
-        return dispatch_store(db, release, command, adapter, state, keys, getattr(args, "approve", None))
+        return dispatch_store(db, release, command, adapter, state, keys, getattr(args, "approve", None), target)
 
 
 def main():

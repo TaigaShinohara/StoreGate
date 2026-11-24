@@ -11,5 +11,8 @@
   "price": "free",
   "purchases": false,
   "publication": "manual",
-  "first": true
+  "first": true,
+  "test_plan": {
+    "iPhone QA": ["PDFを取り込む", "再起動後に同じPDFを開く"]
+  }
 }

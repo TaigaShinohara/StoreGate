@@ -123,9 +123,7 @@ class Apple:
         self.app = target["store_id"]
 
     def status(self, release):
-        app = self.client.request(f"/v1/apps/{self.app}")["data"]
-        if app["id"] != self.app or app["attributes"]["bundleId"] != self.target["bundle"]:
-            raise StoreError("App Store ConnectのアプリとBundle IDが一致しません。")
+        self.check_app()
         platform = "MAC_OS" if self.target["platform"] == "macos" else "IOS"
         path = f"/v1/apps/{self.app}/appStoreVersions"
         versions = list(self.client.elements(path, {"filter[platform]": platform,
@@ -154,6 +152,24 @@ class Apple:
             if (train.get("version"), train.get("platform")) == (release["version"], platform):
                 matches.append(row)
         return get_one(matches, "対象版のビルドを一意に特定できません。") if matches else None
+
+    def check_app(self):
+        app = self.client.request(f"/v1/apps/{self.app}")["data"]
+        if app["id"] != self.app or app["attributes"]["bundleId"] != self.target["bundle"]:
+            raise StoreError("App Store ConnectのアプリとBundle IDが一致しません。")
+
+    def test_status(self, release):
+        self.check_app()
+        build = self.available_build(release, "IOS")
+        if not build:
+            return {"state": "not_observed"}
+        attributes = build["attributes"]
+        processing = attributes.get("processingState")
+        if processing != "VALID":
+            return {"state": processing or "unknown", "build": release["build"]}
+        detail = self.client.request(f"/v1/builds/{build['id']}/buildBetaDetail")["data"]["attributes"]
+        return {"state": detail.get("internalBuildState") or "unknown",
+                "external_state": detail.get("externalBuildState"), "build": release["build"]}
 
     def is_published(self, release, remote):
         return (remote["state"] in {"READY_FOR_SALE", "READY_FOR_DISTRIBUTION"}

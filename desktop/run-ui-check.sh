@@ -9,9 +9,16 @@ bundle="$(cd "$1" && pwd -P)"
 workspace="$(cd "$2" && pwd -P)"
 shift 2
 executable="$bundle/Contents/MacOS/StoreGate"
-if [[ ! -x "$executable" || "$workspace" != /private/tmp/* || "$bundle" != /private/tmp/* ]]; then
-  printf 'Use a test build and data directory under /private/tmp.\n' >&2
+if [[ ! -x "$executable" || "$workspace" != /private/tmp/* ]]; then
+  printf 'Use a StoreGate test build and a data directory under /private/tmp.\n' >&2
   exit 2
+fi
+if [[ "$bundle" != /private/tmp/* ]]; then
+  identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$bundle/Contents/Info.plist")"
+  if [[ "$identifier" != io.github.taigashinohara.storegate.delivery-ui-check ]]; then
+    printf 'A separate build volume requires the dedicated delivery UI test bundle.\n' >&2
+    exit 2
+  fi
 fi
 
 storegate_pids() {
