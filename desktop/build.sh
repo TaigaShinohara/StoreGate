@@ -50,7 +50,7 @@ case "${1:-}" in
     mkdir -p "$resources/scripts" "$resources/data" "$resources/delivery" "$resources/agent-os/hooks"
     build_icon
     cp "$here/Resources/audit_bridge.py" "$resources/"
-    cp "$repo/delivery/"{storegate,assets,builds,stores,apple_assets}.py "$resources/delivery/"
+    cp "$repo/delivery/"{storegate,assets,builds,stores,apple_assets,testing}.py "$resources/delivery/"
     cp "$repo/agent-os/hooks/storegate-guard.sh" "$resources/agent-os/hooks/"
     cp "$repo/scripts/metadata-audit.py" "$repo/scripts/ruling-register.py" \
       "$repo/scripts/macos-source-audit.py" "$repo/scripts/validate-privacy-manifest.py" \

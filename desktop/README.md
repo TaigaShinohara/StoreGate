@@ -56,3 +56,22 @@ python3 delivery/storegate.py status example/ios/1.0.0/1/production
 - `submit` と `publish` は操作の確認内容をJSONで返します。Appleで実行する場合は最新の内容を確認し、`--approve` に返された確認値を渡します。確認値は対象版の成果物・掲載内容・配信条件・ストアの状態に紐づきます。Google PlayはPublishing overviewで審査と公開を操作し、`store-status` で照会します。案件の `internal` はGoogle Play APIの内部テストトラック `qa` として照会します。[Google Playのトラック名](https://developers.google.com/android-publisher/tracks)
 - Appleの公開後は、対象版の「公開先のApp Storeを照合」または `verify-publication <ID>` で、App Store Connectの配信状態とビルド番号、予定地域ごとの公開カタログの版とURLを確認します。すべての予定地域で版が一致すると、公開確認を案件に記録します。[Appleの公開カタログ取得](https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/LookupExamples.html)
 - Google PlayやAppleの地域別照会で手動確認が必要な場合は、各地域から対象版を入手できることを確認し、GUIの「公開後の入手確認」または `attest <ID> publication --region JP --note <確認根拠>` で記録します。複数の地域には `--region` を繰り返して指定します。記録時にストアAPIから対象ビルドの配信状態も確認します。
+
+### テスト配信と実機QA
+
+対象版を選ぶと、iOSではTestFlight、Androidでは登録したテストトラックの記録欄が表示されます。ストア管理画面で対象ビルドのテスト配信を確認し、テスターの参加、端末での入手可否、インストールをそれぞれ記録します。配布ページが開かなかった場合は「要確認」で根拠を保存し、再試行の結果を同じ端末名で記録します。前回の結果は「過去のテスト記録」から確認できます。
+
+Google Playの参加リンクは対象トラックのPlay Consoleからコピーします。「端末向け案内をコピー」で、アプリ名・版・ビルド番号と参加手順をまとめてメールなどに貼り付けられます。TestFlightの内部テスターにはApp Store Connectから招待します。外部テストで公開招待リンクを発行済みの場合は、StoreGateにも登録できます。 [Google Playのテスト案内](https://support.google.com/googleplay/android-developer/answer/9845334) · [TestFlightの内部テスト案内](https://developer.apple.com/help/app-store-connect/test-a-beta-version/add-internal-testers/)
+
+インストール時に端末名・OS・確認できた版とビルド番号を記録します。ビルド番号の根拠には端末での照合、テスター報告、ストア管理画面を指定できます。分からない項目は空欄にできます。実機QAは、インストールできた端末を選んで「PDFを取り込む」など操作ごとに記録します。新しいインストール結果を保存した場合、以前の実機QAは履歴から確認できます。提出前チェックの「対象版の実機確認」は、本番向けの確認が済んだ時点で保存します。
+
+CLIはGUIと同じ記録を読み書きします。以下はGoogle Playの内部テスト案件での例です。
+
+~~~bash
+release_id=example/android/1.0.0/1/internal
+python3 delivery/storegate.py test-link "$release_id" --url https://play.google.com/apps/testing/org.example.app
+python3 delivery/storegate.py record-test "$release_id" availability --device 'テスト端末' --source tester --outcome blocked --note '参加済み。配布ページでアイテムが見つからない'
+python3 delivery/storegate.py record-test "$release_id" installation --device 'テスト端末' --os 'Android 16' --version 1.0.0 --build 1 --build-source store --source tester --outcome pass --note 'Playの配布ページから入手。端末で版を確認'
+python3 delivery/storegate.py record-test "$release_id" qa --device 'テスト端末' --operation 'PDFを取り込む' --source tester --outcome pass --note '合成PDFを追加し、ライブラリから開けた'
+python3 delivery/storegate.py test-status "$release_id"
+~~~
