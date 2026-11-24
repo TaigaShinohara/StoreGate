@@ -13,9 +13,11 @@ import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
 import zlib
+import zipfile
 
 from assets import inspect_images
-from builds import android_identity, build_host, lock, packaged_privacy_manifests
+from builds import android_identity, build_host, file_identity, lock, packaged_privacy_manifests
+from jdk import JDK, resolve_jdk
 from storegate import (ROOT, audit, contexts, database, dispatch_store, execute, guard_result, import_qa, migrate,
                        privacy_corrections, record, save_config, snapshot)
 from stores import Apple, Google, StoreError, apple_storefront
@@ -245,6 +247,117 @@ class DeliveryTests(unittest.TestCase):
                 execute(folder, db, argparse.Namespace(command="test-link", id=production["id"], url=link, clear=False))
             ios["store_id"] = "43"
             self.assertIsNone(snapshot(db, profile, release)[0]["testing"]["invite"])
+
+    def test_preflight_surfaces_initial_setup_without_using_live_stores(self):
+        with self.workspace() as (folder, db):
+            target = {"bundle": "org.example.app", "platform": "ios", "locales": ["ja"], "build_method": "xcode",
+                      "store_id": "42", "provider": "fixture", "team_id": "TEAM123", "auth_env": "STOREGATE_TEST_JWT"}
+            profile = {"id": "fixture", "name": "Fixture", "repo": str(ROOT), "targets": {"ios": target}}
+            release = {"id": "fixture/ios/1.0/1/production", "app": "fixture", "platform": "ios",
+                       "version": "1.0", "build": "1", "track": "production", "regions": []}
+            save_config(db, "profiles", profile)
+            save_config(db, "releases", release)
+            args = argparse.Namespace(command="preflight", id=release["id"], store=False)
+            with patch("preflight.Apple") as apple, patch.dict(os.environ, {"STOREGATE_TEST_JWT": "fixture-only"}):
+                status = execute(folder, db, args)
+                self.assertNotIn("fixture-only", json.dumps(status))
+                rows = {item["name"]: item for item in status["preflight"]["checks"]}
+                self.assertEqual(rows["build_inputs"]["state"], "blocked")
+                self.assertEqual(rows["declaration_plan"]["state"], "pending")
+                self.assertIn("TestFlight", rows["declaration_plan"]["message"])
+                apple.assert_not_called()
+
+                evidence = argparse.Namespace(command="attest", id=release["id"], check="declaration_plan",
+                                              note="Drafted in advance", outcome="pass")
+                self.assertEqual(next(row for row in execute(folder, db, evidence)["checks"]
+                                      if row["name"] == "declarations")["state"], "pending")
+                apple.return_value.status.return_value = {"state": "registration_required"}
+                args.store = True
+                status = execute(folder, db, args)
+                apple.return_value.status.assert_called_once_with(release)
+                rows = {item["name"]: item for item in status["preflight"]["checks"]}
+                self.assertEqual(rows["declaration_plan"]["state"], "pass")
+                self.assertIn("対象版", rows["store_probe"]["message"])
+                apple.return_value.status.side_effect = StoreError("untrusted response", status=403)
+                status = execute(folder, db, args)
+                self.assertIn("読み取り権限", next(item["message"] for item in status["preflight"]["checks"]
+                                               if item["name"] == "store_probe"))
+                args.store = False
+                self.assertEqual(next(item["state"] for item in execute(folder, db, args)["preflight"]["checks"]
+                                      if item["name"] == "store_probe"), "blocked")
+
+    def test_apple_preflight_finds_export_team_and_provisioning_mismatch(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            project = root / "Fixture.xcodeproj"
+            project.mkdir()
+            options = root / "ExportOptions.plist"
+            options.write_bytes(plistlib.dumps({"teamID": "ANOTHER", "signingStyle": "manual",
+                                                "provisioningProfiles": {"org.example.other": "profile"}}))
+            from preflight import build_inputs
+            target = {"platform": "ios", "bundle": "org.example.app", "team_id": "TEAM123", "build_method": "xcode",
+                      "project": str(project), "scheme": "Fixture", "archive": "Fixture.xcarchive",
+                      "export_path": str(root), "export_options": str(options)}
+            with patch("preflight.shutil.which", return_value="/usr/bin/xcodebuild"):
+                result = build_inputs(target, {"artifact": "Fixture.ipa"}, root)
+                self.assertEqual(result["state"], "blocked")
+                self.assertIn("配布チームの一致", result["message"])
+                self.assertIn("対象Bundle ID", result["message"])
+                options.write_bytes(plistlib.dumps({"teamID": "TEAM123", "signingStyle": "manual",
+                                                    "provisioningProfiles": {"org.example.app": "profile"}}))
+                self.assertEqual(build_inputs(target, {"artifact": "Fixture.ipa"}, root)["state"], "pass")
+
+    def test_jdk_falls_back_from_broken_environment_but_requires_explicit_override(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            wrong = root / "broken"
+            native = root / "native"
+            for home in (wrong, native):
+                (home / "bin").mkdir(parents=True)
+                for tool in ("java", "jarsigner", "keytool"):
+                    executable = home / "bin" / tool
+                    executable.touch()
+                    executable.chmod(0o700)
+
+            def probe(argv):
+                if argv[0] == "/usr/libexec/java_home":
+                    self.assertEqual(argv[-1], "arm64")
+                    return Mock(returncode=0, stdout=os.fsencode(native) + b"\n")
+                if Path(argv[0]).parent.parent == wrong.resolve():
+                    raise OSError("wrong architecture")
+                return Mock(returncode=0, stdout=b"", stderr=b"    java.version = 17.0.20\n    os.arch = aarch64\n")
+
+            with patch.dict(os.environ, {"JAVA_HOME": str(wrong)}), patch("jdk.platform.system", return_value="Darwin"), \
+                 patch("jdk.platform.machine", return_value="arm64"), patch("jdk.command", side_effect=probe):
+                result = resolve_jdk({})
+                self.assertEqual(result.home, native.resolve())
+                self.assertEqual(result.architecture, "aarch64")
+                self.assertIn("JAVA_HOME", result.fallback)
+                self.assertEqual(result.environment()["JAVA_HOME"], str(native.resolve()))
+                with self.assertRaisesRegex(ValueError, "java_home"):
+                    resolve_jdk({"java_home": str(wrong)})
+
+    def test_aab_uses_one_jdk_for_all_tools_and_reports_which_one_failed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            artifact = root / "build.aab"
+            with zipfile.ZipFile(artifact, "w") as bundle:
+                bundle.writestr("base/manifest/AndroidManifest.xml", b"fixture")
+                bundle.writestr("base/dex/classes.dex", b"fixture")
+            jdk = JDK(root / "jdk", "17", "aarch64", "java_home")
+            target = {"platform": "android", "signer_sha256": "aa" * 32, "bundletool": str(root / "bundletool.jar")}
+            manifest = (b'<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.example.app" '
+                        b'android:versionName="1.2" android:versionCode="3">'
+                        b'<uses-sdk android:targetSdkVersion="36"/><application/></manifest>')
+            outputs = [b"jar verified.", b"SHA256: " + b"aa:" * 31 + b"aa", manifest]
+            with patch("builds.resolve_jdk", return_value=jdk), patch("builds.checked", side_effect=outputs) as checked:
+                inspected = file_identity(artifact, target)
+                self.assertEqual(inspected.jdk, jdk.details())
+                self.assertEqual([call.args[0][0] for call in checked.call_args_list],
+                                 [jdk.tool("jarsigner"), jdk.tool("keytool"), jdk.tool("java")])
+            with patch("builds.resolve_jdk", return_value=jdk), patch("builds.checked", side_effect=ValueError("exit 1")):
+                with self.assertRaisesRegex(ValueError, r"Java 17、aarch64"):
+                    file_identity(artifact, target)
 
     def test_approval_changes_and_unknown_reconcile_without_resending(self):
         with self.workspace() as (_, db):

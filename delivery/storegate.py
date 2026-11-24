@@ -19,6 +19,8 @@ from pathlib import Path
 from assets import PLAY_COUNTS, SLOTS, inspect_images
 from builds import (build_commands, build_host, digest, file_identity, git_source, lock,
                     manifest_digest, run, tree_digest)
+from jdk import resolve_jdk
+from preflight import build_inputs, local_checks, probe_store, signing_inputs
 from testing import TEST_STAGES, save_observation, test_progress, validate_invite
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,7 +89,7 @@ def profile_from(source):
     if not profile["targets"] or profile["targets"].keys() - STORES.keys():
         raise ValueError("ストアの対象を登録してください。")
     for platform, target in profile["targets"].items():
-        fields_only(target, "bundle store_id provider auth_env team_id signer_sha256 build_method build_command preflight qa_command capture_command project scheme archive export_options export_path gradle_task bundletool required_entries slots locales placement_groups play_staging issuer_id transporter_key_id privacy_manifest_sources")
+        fields_only(target, "bundle store_id provider auth_env team_id signer_sha256 build_method build_command preflight qa_command capture_command project scheme archive export_options export_path gradle_task bundletool java_home required_entries slots locales placement_groups play_staging issuer_id transporter_key_id privacy_manifest_sources")
         if not BUNDLE.fullmatch(target["bundle"]):
             raise ValueError("Bundle ID / applicationId を確認してください。")
         if target["build_method"] not in {"flutter", "xcode", "gradle", "ci"}:
@@ -112,9 +114,14 @@ def profile_from(source):
                 or any(type(count) is not int or not limits[slot][0] <= count <= limits[slot][1]
                        for slot, count in slots.items())):
             raise ValueError("端末枠と画像の枚数を確認してください。")
-        for name in ("project", "archive", "export_options", "export_path", "bundletool"):
+        if "java_home" in target and (platform != "android" or not isinstance(target["java_home"], str)
+                                     or not target["java_home"].strip()):
+            raise ValueError("Androidのjava_homeにはJDKのホームフォルダを指定してください。")
+        if "signer_sha256" in target and not isinstance(target["signer_sha256"], str):
+            raise ValueError("アップロード証明書のSHA-256は文字列で指定してください。")
+        for name in ("project", "archive", "export_options", "export_path", "bundletool", "java_home"):
             if target.get(name):
-                target[name] = absolute(profile["repo"], target[name])
+                target[name] = absolute(profile["repo"], str(Path(target[name]).expanduser()) if name == "java_home" else target[name])
         for group in target.get("placement_groups", {}).values():
             token(group)
         if "play_staging" in target and type(target["play_staging"]) is not bool:
@@ -261,9 +268,11 @@ def contexts(profile, target, release, source, images, artifact):
         source_rules.extend([target["privacy_manifest_sources"], artifact_digest])
     return {name: fingerprint(value) for name, value in {
         "source": source_rules,
-        "build_preflight": [identity, source, target.get("preflight")],
+        "build_preflight": [identity, source, target.get("preflight")] +
+                           ([target["java_home"]] if target.get("java_home") else []),
         "metadata": [identity, listing, target["locales"], listing_rules],
         "account": store,
+        "declaration_plan": [store, source, terms],
         "device": [identity, artifact_digest],
         "declarations": [store, source, artifact_digest, terms],
         "checklist": [store, source, artifact_digest, assets, listing, terms, guard_rules, listing_rules],
@@ -282,8 +291,11 @@ def artifact_status(target, release):
         if (artifact.bundle, artifact.version, artifact.build) != (target["bundle"], release["version"], release["build"]):
             raise ValueError("成果物のアプリID・版・ビルド番号が案件と一致しません。")
         manifests = {"privacy_manifests": artifact.manifests} if artifact.manifests else {}
-        return finding("artifact", "pass", "成果物の識別情報と署名を照合しました。",
-                       sdk=artifact.sdk, sha256=artifact.sha256, format=path.suffix, **manifests)
+        jdk = getattr(artifact, "jdk", None)
+        jdk_detail = f"\nJDK: {jdk['home']}（Java {jdk['version']}、{jdk['architecture']}）" if jdk else ""
+        return finding("artifact", "pass", "成果物の識別情報と署名を照合しました。" + jdk_detail,
+                       sdk=artifact.sdk, sha256=artifact.sha256, format=path.suffix, **manifests,
+                       **({"jdk": jdk} if jdk else {}))
     except (ValueError, OSError, zipfile.BadZipFile, subprocess.TimeoutExpired) as exc:
         message = str(exc) if type(exc) is ValueError else "成果物または検査ツールを確認してください。"
         return finding("artifact", "blocked", message)
@@ -416,11 +428,15 @@ def audit(db, profile, release):
     state, keys = snapshot(db, profile, release)
     artifact = next(item for item in state["checks"] if item["name"] == "artifact")
     if target.get("preflight"):
-        result = run(expand(target["preflight"], release), profile["repo"])
-        message = ("アプリの配布設定を検査しました。" if not result.returncode else
-                   "アプリの配布設定を確認してください。登録された事前検査が通っていません。")
-        record(db, release, "build_preflight", keys["build_preflight"],
-               "blocked" if result.returncode else "pass", {"message": message})
+        try:
+            environment = resolve_jdk(target).environment() if target["platform"] == "android" else None
+            result = run(expand(target["preflight"], release), profile["repo"], env=environment)
+            message = ("アプリの配布設定を検査しました。" if not result.returncode else
+                       "アプリの配布設定を確認してください。登録された事前検査が通っていません。")
+            outcome = "blocked" if result.returncode else "pass"
+        except ValueError as exc:
+            outcome, message = "blocked", str(exc)
+        record(db, release, "build_preflight", keys["build_preflight"], outcome, {"message": message})
     command = ["bash", str(ROOT / "agent-os/hooks/storegate-guard.sh"), profile["repo"], "--platform", release["platform"]]
     sdk_evidence = {}
     if target["platform"] == "android" and artifact["state"] == "pass" and artifact.get("format") == ".aab":
@@ -452,10 +468,14 @@ def audit(db, profile, release):
 def build(db, profile, release):
     target = profile["targets"][release["platform"]]
     repo = Path(profile["repo"])
-    if target.get("preflight"):
-        result = run(expand(target["preflight"], release), repo)
-        if result.returncode:
-            raise ValueError("アプリの配布設定が未完了です。登録されたビルド前検査を確認してください。")
+    inputs = build_inputs(target, release, repo)
+    if inputs["state"] != "pass":
+        raise ValueError(inputs["message"])
+    commands = build_commands(profile, target)
+    signing = signing_inputs(target)
+    if signing["state"] != "pass":
+        raise ValueError(signing["message"])
+    environment = resolve_jdk(target).environment() if target["platform"] == "android" else None
     pattern = release.get("artifact_pattern")
     artifact = release.get("artifact")
     if not pattern and not artifact:
@@ -465,9 +485,13 @@ def build(db, profile, release):
         return {str(path): path.stat().st_mtime_ns for path in map(Path, paths) if path.exists()}
 
     with build_host(repo):
+        if target.get("preflight"):
+            result = run(expand(target["preflight"], release), repo, env=environment)
+            if result.returncode:
+                raise ValueError("アプリの配布設定が未完了です。登録されたビルド前検査を確認してください。")
         previous = candidates()
-        for argv in build_commands(profile, target):
-            result = run(expand(argv, release), repo, timeout=7200)
+        for argv in commands:
+            result = run(expand(argv, release), repo, timeout=7200, env=environment)
             if result.returncode:
                 raise ValueError(f"ビルドが終了コード {result.returncode} を返しました。アプリのビルド手順と署名を確認してください。")
         changed = [path for path, modified in candidates().items() if previous.get(path) != modified]
@@ -602,6 +626,32 @@ def attest(db, profile, release, args):
     return snapshot(db, profile, release)[0]
 
 
+def preflight(db, profile, release, with_store):
+    target = profile["targets"][release["platform"]]
+    _, console = STORES[release["platform"]]
+    source = git_source(Path(profile["repo"]))
+    keys = contexts(profile, target, release, source, [], {})
+    checks = local_checks(target, release, profile["repo"])
+    account = observe(db, release, "account", keys["account"],
+                      "アプリIDとアカウント権限を管理画面で確認。本人確認・規約同意が表示された場合は本人が対応します。")
+    plan_prompt = ("Data safety、年齢、広告、対象者、アプリアクセスの回答と担当を確認してください。" if release["platform"] == "android" else
+                   "App Privacy、年齢、輸出コンプライアンスの回答と担当を確認してください。暗号化の回答はTestFlightの前にも確認します。")
+    plan = observe(db, release, "declaration_plan", keys["declaration_plan"], plan_prompt)
+    checks.extend([{**account, "title": "アカウント・契約の確認"},
+                   {**plan, "title": "申告の準備"}])
+    if target.get("preflight"):
+        configured = observe(db, release, "build_preflight", keys["build_preflight"],
+                             "「監査・準備」でアプリ固有の配布設定を検査してください。")
+        checks.append({**configured, "title": "アプリの事前検査"})
+    if with_store:
+        result = probe_store(target, release)
+        record(db, release, "store_probe", keys["account"], result["state"], {"message": result["message"]})
+    receipt = observe(db, release, "store_probe", keys["account"], "必要に応じてAPIで読み取り照会してください。")
+    checks.append({**receipt, "title": "APIの読み取り結果"})
+    return {"preflight": {"app": profile["name"], "bundle": target["bundle"], "version": release["version"],
+                          "build": release["build"], "track": release["track"], "console": console, "checks": checks}}
+
+
 def verify_publication(db, profile, release):
     from stores import Apple
 
@@ -644,6 +694,9 @@ def parse():
     receipt = commands.add_parser("import-qa")
     receipt.add_argument("id")
     receipt.add_argument("file", type=Path)
+    precheck = commands.add_parser("preflight", help="配布設定を診断し、初回に必要な確認を表示する")
+    precheck.add_argument("id")
+    precheck.add_argument("--store", action="store_true", help="対象ストアを読み取り照会する")
     commands.add_parser("test-status", help="対象版のテストの記録を表示する").add_argument("id")
     invite = commands.add_parser("test-link", help="対象版のテスト参加リンクを記録する")
     invite.add_argument("id")
@@ -669,7 +722,7 @@ def parse():
         if name in ("submit", "publish"):
             command.add_argument("--approve")
         if name == "attest":
-            command.add_argument("check", choices=[*MANUAL, "publication"])
+            command.add_argument("check", choices=[*MANUAL, "publication", "declaration_plan"])
             command.add_argument("--outcome", default="pass", choices=("pass", "blocked"))
             command.add_argument("--note", required=True)
             command.add_argument("--region", action="append")
@@ -738,6 +791,8 @@ def execute(folder, db, args):
         release = fetch(db, "releases", args.id)
         profile = fetch(db, "profiles", release["app"])
         target = profile["targets"][release["platform"]]
+        if command == "preflight":
+            return preflight(db, profile, release, args.store)
         if command in ("test-link", "record-test"):
             scope = testing_scope(target, release)
             if scope is None:

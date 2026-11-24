@@ -12,7 +12,9 @@ import xml.etree.ElementTree as ET
 import zipfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, Optional
+
+from jdk import resolve_jdk
 
 
 class Artifact(NamedTuple):
@@ -22,6 +24,7 @@ class Artifact(NamedTuple):
     sdk: str
     sha256: str
     manifests: dict
+    jdk: Optional[dict] = None
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -182,6 +185,15 @@ def verified_digest(path, before):
     return after
 
 
+def jdk_checked(jdk, tool, args):
+    try:
+        return checked([jdk.tool(tool), *args])
+    except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
+        detail = str(exc) if isinstance(exc, ValueError) else f"{tool} を実行できません。"
+        raise ValueError(f"{detail}\n使用したJDKは {jdk.home}（Java {jdk.version}、{jdk.architecture}）です。"
+                         "ツールと署名の設定を確認してください。別のJDKを使う場合は java_home を指定してください。") from None
+
+
 def file_identity(path, target):
     if not path.exists():
         raise ValueError("署名済み成果物を登録するかビルドしてください。")
@@ -198,10 +210,11 @@ def file_identity(path, target):
             required = target.get("required_entries", [])
             if any(entry not in bundle.namelist() for entry in required):
                 raise ValueError("AABに必要な同梱ファイルがありません。")
-        verified = checked(["jarsigner", "-J-Duser.language=en", "-verify", str(path)]).lower()
+        jdk = resolve_jdk(target)
+        verified = jdk_checked(jdk, "jarsigner", ["-J-Duser.language=en", "-verify", str(path)]).lower()
         if b"jar verified." not in verified or b"unsigned entries" in verified:
             raise ValueError("AABの署名をすべてのエントリで確認できません。")
-        cert = checked(["keytool", "-J-Duser.language=en", "-printcert", "-jarfile", str(path)])
+        cert = jdk_checked(jdk, "keytool", ["-J-Duser.language=en", "-printcert", "-jarfile", str(path)])
         fingerprints = re.findall(rb"SHA256:\s*([A-Fa-f0-9:]+)", cert)
         actual = {value.decode().replace(":", "").lower() for value in fingerprints}
         if not expected or actual != {expected}:
@@ -209,8 +222,8 @@ def file_identity(path, target):
         tool = target.get("bundletool")
         if not tool:
             raise ValueError("マニフェスト検査用のbundletool JARを登録してください。")
-        manifest = checked(["java", "-jar", tool, "dump", "manifest", "--bundle=" + str(path), "--module=base"])
-        return Artifact(*android_identity(manifest), verified_digest(path, before), {})
+        manifest = jdk_checked(jdk, "java", ["-jar", tool, "dump", "manifest", "--bundle=" + str(path), "--module=base"])
+        return Artifact(*android_identity(manifest), verified_digest(path, before), {}, jdk.details())
 
     if path.is_file() and path.suffix in (".ipa", ".pkg"):
         before = digest(path)
