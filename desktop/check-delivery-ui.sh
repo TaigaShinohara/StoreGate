@@ -14,11 +14,22 @@ printf 'StoreGate UI fixture: %s\nState: %s\n' "$qa_dir" "$workspace"
 STOREGATE_DESKTOP_BUILD_DIR="$build" bash "$here/build.sh"
 xcrun --sdk macosx swiftc -swift-version 6 -D STOREGATE_UI_CHECK -target "$(uname -m)-apple-macosx14.0" \
   -module-cache-path "$build/ModuleCache" \
-  "$here/Sources/SharedDeliveryView.swift" "$here/Sources/TestingPane.swift" "$here/Sources/ResumePane.swift" \
+  "$here/Sources/SharedDeliveryView.swift" "$here/Sources/TestingPane.swift" "$here/Sources/ResumePane.swift" "$here/Sources/ReleaseIntakePane.swift" \
   "$here/Tests/SharedDeliveryUIChecks.swift" -o "$bundle/Contents/MacOS/StoreGate"
 /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier io.github.taigashinohara.storegate.delivery-ui-check' "$bundle/Contents/Info.plist"
 /usr/bin/codesign --force --sign - "$bundle"
 
+mkdir -p "$qa_dir/bin"
+cat > "$qa_dir/bin/xcrun" <<'SH'
+#!/usr/bin/env bash
+if [[ "$1" == devicectl && "$2" == list && "$3" == devices ]]; then
+    printf '%s\n' '{"result":{"devices":[]}}'
+else
+    exec /usr/bin/xcrun "$@"
+fi
+SH
+chmod +x "$qa_dir/bin/xcrun"
+export PATH="$qa_dir/bin:$PATH"
 export PYTHONDONTWRITEBYTECODE=1
 python3 - "$repo" "$workspace" <<'PY'
 import json
@@ -60,7 +71,7 @@ for _ in range(145):
         message = result.read_text()
         if message != "pass":
             sys.exit(message)
-        print("GUI check passed. Invitation, download retry, QA history, and approval packet.")
+        print("GUI check passed. Intake save and reopen, preflight, invitation, QA history, and approval packet.")
         break
     time.sleep(0.3)
 else:

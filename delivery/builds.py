@@ -92,16 +92,39 @@ def lock(path):
         os.close(fd)
 
 
+BUILD_FREE_BYTES = 10 * 1024**3
+
+
+def temporary_path():
+    return Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
+
+
+def disk_for(path):
+    path = Path(path)
+    if path.parts[:2] == ("/", "Volumes") and len(path.parts) >= 3:
+        volume = Path(*path.parts[:3])
+        if not volume.is_mount():
+            raise FileNotFoundError(volume)
+    for folder in (path, *path.parents):
+        try:
+            return folder, shutil.disk_usage(folder).free
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+    raise FileNotFoundError(path)
+
+
 @contextmanager
-def build_host(repo):
-    scratch = Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
-    minimum_free = 10 * 1024**3
-    if shutil.disk_usage(scratch).free < minimum_free:
+def build_host(repo, outputs=()):
+    scratch = temporary_path()
+    if disk_for(scratch)[1] < BUILD_FREE_BYTES:
         raise ValueError("ビルド用の一時ディレクトリがあるボリュームの空き容量が10 GiBを下回っています。")
     path = scratch / f"storegate-build-{os.getuid()}.lock"
     with lock(path):
-        if shutil.disk_usage(repo).free < minimum_free:
+        if disk_for(repo)[1] < BUILD_FREE_BYTES:
             raise ValueError("ビルド先の空き容量が10 GiBを下回っています。")
+        for title, output in outputs:
+            if disk_for(output)[1] < BUILD_FREE_BYTES:
+                raise ValueError(f"{title}の空き容量が10 GiBを下回っています。出力先を確認してください。")
         if shutil.which("sysctl") and os.uname().sysname == "Darwin":
             pressure = run(["sysctl", "-n", "kern.memorystatus_vm_pressure_level"])
             if pressure.returncode or pressure.stdout.strip() != b"1":

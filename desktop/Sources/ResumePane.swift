@@ -16,6 +16,9 @@ struct HandoffStep: Decodable, Identifiable, Sendable {
     let reason: String
     let resume_when: String
     let device: String?
+    let impact: String?
+    let category: String?
+    let command: [String]?
 
     var ownerLabel: String {
         ["ai": "AI", "operator": "配信担当", "tester": "テスター", "owner": "本人", "store": "ストア"][owner] ?? ""
@@ -78,6 +81,7 @@ struct ReleaseApprovalPacket: Decodable, Sendable {
 struct ResumePane: View {
     let steps: [HandoffStep]
     let history: [ReleaseReadbacks.Observation]
+    let run: ([String]) -> Void
 
     var body: some View {
         if let first = steps.first {
@@ -115,7 +119,13 @@ struct ResumePane: View {
             Text([step.stateLabel, step.ownerLabel].filter { !$0.isEmpty }.joined(separator: " · "))
                 .font(.callout).foregroundStyle(.secondary)
             Text(step.reason)
-            if step.state != "complete" { Text(step.resume_when).foregroundStyle(.secondary) }
+            if step.state != "complete" {
+                if let impact = step.impact { Text(impact).font(.callout) }
+                Text(step.resume_when).foregroundStyle(.secondary)
+                if let command = step.command, ["draft", "review-draft"].contains(command.first ?? ""), step.category == "runnable" {
+                    Button(step.title) { run(command) }
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

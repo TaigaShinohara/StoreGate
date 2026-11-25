@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 
+from intake import summary_rows
 from workflow import CHECK_LABELS, TEST_LABELS
 
 
@@ -109,9 +110,13 @@ def packet_sections(release, target, state, readbacks, action, metadata_digest, 
         effect += " Play Consoleで同時に送信される変更を確認してください。"
         if release.get("first"):
             effect += " 初回は審査後の公開条件まで確認してください。"
+    report = state.get("intake")
+    intake_sections = ([section("intake", "開始時の回答", summary_rows(report))]
+                       if report and report["saved_at"] else [])
     return [
         section("release", "対象版と配信条件",
                 [(name, value if isinstance(value, str) and value else "未設定") for name, value in fields]),
+        *intake_sections,
         section("artifact", "成果物", [("署名と版の照合", STATE[artifact["state"]]),
                                        ("SHA-256", artifact.get("sha256") or "未確認")]),
         section("listing", "ローカルの掲載原稿", listing_rows + [("原稿の確認値", metadata_digest)]),
