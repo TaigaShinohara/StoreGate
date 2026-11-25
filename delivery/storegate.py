@@ -20,7 +20,7 @@ from assets import PLAY_COUNTS, SLOTS, inspect_images
 from approval import changes_since, comparable_sections, packet_sections
 from builds import (build_commands, build_host, digest, file_identity, git_source, lock,
                     manifest_digest, run, tree_digest)
-from intake import BASE, DECLARATIONS, checklist, save_answers, unresolved as unanswered
+from intake import BASE, DECLARATIONS, WORLDWIDE, checklist, save_answers, unresolved as unanswered
 from jdk import resolve_jdk
 from preflight import (auth_checks, build_inputs, build_outputs, capacity_checks, device_choices, device_inventory,
                        local_checks, probe_store, signing_inputs)
@@ -141,9 +141,8 @@ def profile_from(source):
     return profile
 
 
-def release_from(source, profile):
-    value = json.loads(source.read_text())
-    fields_only(value, "app platform version build track pack artifact artifact_pattern metadata regions price purchases publication first test_plan")
+def release_from(source, profile, value):
+    fields_only(value, "app platform version build track pack artifact artifact_pattern metadata regions region_scope price purchases publication first test_plan")
     if value["app"] != profile["id"]:
         raise ValueError("配信設定のアプリが一致しません。")
     target = profile["targets"][value["platform"]]
@@ -167,8 +166,14 @@ def release_from(source, profile):
                     for device, operations in plan.items())):
             raise ValueError("test_plan には必須の端末名と重複のない操作名の配列を指定してください。")
     regions = value.get("regions", [])
-    if not isinstance(regions, list) or any(not re.fullmatch(r"[A-Z]{2}", region) for region in regions):
+    if not isinstance(regions, list) or any(not isinstance(region, str) or not re.fullmatch(r"[A-Z]{2}", region)
+                                            for region in regions):
         raise ValueError("配信地域には二文字の地域コードを指定してください。")
+    region_scope = value.pop("region_scope", None)
+    if region_scope is not None:
+        if region_scope != WORLDWIDE or track != "production":
+            raise ValueError("全世界配信は本番案件の region_scope に worldwide を指定してください。")
+        value["region_scope"] = region_scope
     value["regions"] = sorted(set(regions))
     for name in ("pack", "artifact", "artifact_pattern", "metadata"):
         value[name] = absolute(source.parent, value.get(name))
@@ -187,6 +192,7 @@ def database(folder):
             PRAGMA foreign_keys = ON;
             CREATE TABLE IF NOT EXISTS profiles (id TEXT PRIMARY KEY, data TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS releases (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS settings (id TEXT PRIMARY KEY, data TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS evidence (
                 release TEXT NOT NULL REFERENCES releases(id), name TEXT NOT NULL,
                 digest TEXT NOT NULL, state TEXT NOT NULL, data TEXT NOT NULL, time TEXT NOT NULL,
@@ -248,6 +254,11 @@ def save_config(db, table, value):
                    (value["id"], encoded(value)))
 
 
+def release_defaults(db):
+    row = db.execute("SELECT data FROM settings WHERE id = 'release_defaults'").fetchone()
+    return json.loads(row["data"])["regions"] if row else None
+
+
 def record(db, release, name, digest, state, data):
     with db:
         db.execute("INSERT OR REPLACE INTO evidence VALUES (?, ?, ?, ?, ?, ?)",
@@ -275,6 +286,8 @@ def contexts(profile, target, release, source, images, artifact):
     listing = tree_digest(Path(local_metadata)) if local_metadata and Path(local_metadata).is_dir() else None
     assets = [{key: value for key, value in image.items() if key != "path"} for image in images]
     terms = [release.get(key) for key in ("regions", "price", "purchases", "publication", "first")]
+    if release.get("region_scope") == WORLDWIDE:
+        terms.append(WORLDWIDE)
     artifact_digest = artifact.get("sha256")
     guard_rules = [digest(ROOT / name) for name in (
         "agent-os/hooks/storegate-guard.sh", "scripts/fleet-sweep.py", "scripts/macos-source-audit.py",
@@ -418,9 +431,13 @@ def snapshot(db, profile, release):
     terms_set = (release.get("regions") and isinstance(release.get("price"), str)
                  and release["price"].strip() and release.get("publication")
                  and type(release.get("purchases")) is bool and type(release.get("first")) is bool)
-    stages.append(finding("conditions", "pass" if terms_set else "pending",
-                          "価格・地域・支援購入・公開方式・初回扱いを確定してください。" if not terms_set else
-                          "配信条件を登録しました。"))
+    if terms_set:
+        conditions = "配信条件を登録しました。"
+    elif release.get("region_scope") == WORLDWIDE and not release.get("regions"):
+        conditions = "全世界配信を予定しています。公式ストアの配信対象地域を照合し、地域コードの一覧を登録してください。"
+    else:
+        conditions = "価格・地域・支援購入・公開方式・初回扱いを確定してください。"
+    stages.append(finding("conditions", "pass" if terms_set else "pending", conditions))
     report = checklist(release, target)
     if report["saved_at"] and release["track"] == "production":
         pending = unanswered(report, (*BASE, *DECLARATIONS, "supported_devices"))
@@ -702,6 +719,8 @@ def dispatch_store(db, release, action, adapter, state=None, keys=None, approval
     operation = adapter.describe(action, release, remote)
     summary = {key: state[key] for key in ("app", "platform", "bundle", "store_id", "version", "build", "track")}
     summary.update({key: release.get(key) for key in ("price", "regions", "purchases", "publication", "first")})
+    if release.get("region_scope") == WORLDWIDE:
+        summary["region_scope"] = WORLDWIDE
     summary.update(operation, action=action, before=remote, evidence=keys, images=state["images"])
     artifact = next((item for item in state["checks"] if item["name"] == "artifact"), None)
     if artifact:
@@ -936,6 +955,8 @@ def parse():
     commands.add_parser("legacy").add_argument("legacy_id")
     commands.add_parser("register").add_argument("file", type=Path)
     commands.add_parser("release").add_argument("file", type=Path)
+    defaults = commands.add_parser("defaults", help="新規本番案件の配信地域の既定値を表示・変更する")
+    defaults.add_argument("--regions", choices=(WORLDWIDE, "unset"))
     intake = commands.add_parser("intake", help="案件の開始時の確認リストを表示・保存する")
     intake.add_argument("id")
     intake.add_argument("--answers-json", help="確認リストのキーと回答をJSONで保存する")
@@ -1031,19 +1052,33 @@ def execute(folder, db, args):
             return {**result, "migration_error": "既存Mac案件の読み込みに失敗しました。Mac App Store画面から確認してください。"}
     if command == "legacy":
         return fetch(db, "legacy_mac", args.legacy_id)
+    if command == "defaults":
+        if args.regions:
+            save_config(db, "settings", {"id": "release_defaults",
+                                         "regions": WORLDWIDE if args.regions == WORLDWIDE else None})
+        return {"defaults": {"regions": release_defaults(db)}}
     if command == "register":
         profile = profile_from(args.file.resolve())
         with lock(folder / (profile["id"] + ".lock")):
             save_config(db, "profiles", profile)
         return {"app": profile["id"]}
     if command == "release":
-        profile = fetch(db, "profiles", json.loads(args.file.read_text())["app"])
+        source = args.file.resolve()
+        value = json.loads(source.read_text())
+        has_region_settings = "regions" in value or "region_scope" in value
+        profile = fetch(db, "profiles", value["app"])
         with lock(folder / (profile["id"] + ".lock")):
             profile = fetch(db, "profiles", profile["id"])
-            release = release_from(args.file.resolve(), profile)
-            previous = db.execute("SELECT data FROM releases WHERE id=?", (release["id"],)).fetchone()
-            if previous and (saved := json.loads(previous["data"]).get("intake")):
-                release["intake"] = saved
+            release = release_from(source, profile, value)
+            previous_row = db.execute("SELECT data FROM releases WHERE id=?", (release["id"],)).fetchone()
+            previous = json.loads(previous_row["data"]) if previous_row else None
+            if previous and previous.get("intake"):
+                release["intake"] = previous["intake"]
+            if not has_region_settings and release["track"] == "production":
+                if previous is not None:
+                    release.update({key: previous[key] for key in ("regions", "region_scope") if key in previous})
+                elif release_defaults(db) == WORLDWIDE:
+                    release["region_scope"] = WORLDWIDE
             save_config(db, "releases", release)
         target = profile["targets"][release["platform"]]
         return {"id": release["id"], "intake": checklist(release, target),

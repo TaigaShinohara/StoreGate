@@ -4,6 +4,8 @@ import json
 import re
 
 PENDING = "pending"
+WORLDWIDE = "worldwide"
+WORLDWIDE_LABEL = "全世界"
 BASE = ("first", "price", "regions", "purchases", "publication")
 DECLARATIONS = ("ads", "data", "age", "rights", "encryption", "app_access", "support", "public_support")
 DISTRIBUTION = ("tester_group", "delivery_method")
@@ -36,7 +38,7 @@ def questions(release):
                     ("identity", "本人確認が必要"), *NA))
     if production:
         yield question("price", "価格", "例　無料は free、有料は JPY 400")
-        yield question("regions", "配信地域", "例　日本のみは JP。複数の場合は JP, US")
+        yield question("regions", "配信地域", "例　全世界、日本のみは JP、複数の場合は JP, US")
         yield question("purchases", "アプリ内課金・支援購入", "例　このビルドでは支援購入を提供しない", YES_NO)
         yield question("publication", "本番の公開方法", "例　審査通過後に本人が公開", (("manual", "手動"), ("automatic", "自動")))
         pairs = {
@@ -96,7 +98,9 @@ def prefill(release, target):
     for key in ("price", "publication"):
         if release.get(key):
             values[key] = release[key]
-    if release.get("regions"):
+    if release.get("region_scope") == WORLDWIDE:
+        values["regions"] = WORLDWIDE_LABEL
+    elif release.get("regions"):
         values["regions"] = ", ".join(release["regions"])
     if release.get("test_plan"):
         values["test_plan"] = plan_text(release["test_plan"])
@@ -118,7 +122,10 @@ def checklist(release, target):
         else:
             state = "saved" if saved else "prefilled"
         fields.append({**item, "value": value, "state": state})
-    revision = hashlib.sha256(json.dumps([identity(target), saved, values], sort_keys=True).encode()).hexdigest()
+    inputs = [identity(target), saved, values]
+    if release.get("region_scope") == WORLDWIDE:
+        inputs.append(release.get("regions", []))
+    revision = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
     return {"id": release["id"], "saved_at": saved.get("saved_at"), "fields": fields, "revision": revision}
 
 
@@ -144,6 +151,8 @@ def save_answers(release, target, answers, timestamp):
         if not isinstance(value, str) or len(value) > (2048 if key == "test_plan" else 180):
             raise ValueError("開始時の回答の形式を確認してください。")
         value = value.strip()
+        if key == "regions" and value.lower() == WORLDWIDE:
+            value = WORLDWIDE_LABEL
         if value == values.get(key):
             continue
         options = {item["value"] for item in fields[key]["options"]}
@@ -158,6 +167,8 @@ def save_answers(release, target, answers, timestamp):
         if value == PENDING or not value:
             if key in (*BASE, "test_plan"):
                 release.pop(key, None)
+            if key == "regions":
+                release.pop("region_scope", None)
             values[key] = value
             continue
         if not options and (re.search(r"[@/]|\+\d|\d{2,}[- ]\d{2,}[- ]\d{3,}", value)
@@ -170,11 +181,16 @@ def save_answers(release, target, answers, timestamp):
                 raise ValueError("価格は free または通貨コードと金額（例 JPY 400）で入力してください。")
             release[key] = value
         elif key == "regions":
-            regions = re.split(r"[\s,、]+", value.upper())
-            if any(not re.fullmatch(r"[A-Z]{2}", region) for region in regions):
-                raise ValueError("配信地域を二文字の地域コードで入力してください（例 JP, US）。")
-            release[key] = sorted(set(regions))
-            value = ", ".join(release[key])
+            if value == WORLDWIDE_LABEL:
+                release["region_scope"] = WORLDWIDE
+                release["regions"] = []
+            else:
+                regions = re.split(r"[\s,、]+", value.upper())
+                if any(not re.fullmatch(r"[A-Z]{2}", region) for region in regions):
+                    raise ValueError("全世界または二文字の地域コードで入力してください（例 JP, US）。")
+                release.pop("region_scope", None)
+                release["regions"] = sorted(set(regions))
+                value = ", ".join(release["regions"])
         elif key == "publication":
             release[key] = value
         elif key == "test_plan":

@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-from intake import summary_rows
+from intake import WORLDWIDE, WORLDWIDE_LABEL, summary_rows
 from workflow import CHECK_LABELS, TEST_LABELS
 
 
@@ -63,11 +63,14 @@ def section(code, title, rows):
 
 
 def packet_sections(release, target, state, readbacks, action, metadata_digest, linked_testing=()):
+    regions = "、".join(release.get("regions") or [])
+    if release.get("region_scope") == WORLDWIDE:
+        regions = f"{WORLDWIDE_LABEL}（{regions or 'ストアの配信対象地域を照合待ち'}）"
     fields = (
         ("アプリ", state["app"]), ("アプリID", target["bundle"]), ("ストア登録ID", target.get("store_id")),
         ("版・ビルド", f"{release['version']}（{release['build']}）"),
         ("対象", f"{state['store']} · {release['track']}"),
-        ("予定地域", "、".join(release.get("regions") or [])),
+        ("予定地域", regions),
         ("価格", release.get("price")),
         ("支援購入", {True: "あり", False: "なし"}.get(release.get("purchases"))),
         ("公開方式", {"manual": "手動", "automatic": "自動"}.get(release.get("publication"))),
