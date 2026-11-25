@@ -383,6 +383,18 @@ printf 'plugins { id("com.android.application") }\nandroid { defaultConfig { tar
 printf 'val donate = "https://opencollective.com/example/donate"\n' > "$D/app/src/main/java/t/Src.kt"
 OUT="$(bash "$GUARD" "$D" 2>&1)"
 echo "$OUT" | grep -q 'GOOGLE-PAYMENTS-DONATION-LINK' && ok "Open Collective donate link fires the Payments finding" || bad "Open Collective donate link fires the Payments finding"
+rm "$D/app/src/main/java/t/Src.kt"
+mkdir -p "$D/patches/storage"
+printf 'name: storage\nfunding:\n  - https://github.com/sponsors/storage\n' > "$D/patches/storage/pubspec.yaml"
+OUT="$(bash "$GUARD" "$D" 2>&1)"
+! echo "$OUT" | grep -q 'GOOGLE-PAYMENTS-DONATION-LINK' && ok "Pub package funding is not an in-app donation link" || bad "Pub package funding is not an in-app donation link"
+printf 'val donate = "https://github.com/sponsors/storage"\n' > "$D/app/src/main/java/t/Src.kt"
+OUT="$(bash "$GUARD" "$D" 2>&1)"
+echo "$OUT" | grep -A1 'GOOGLE-PAYMENTS-DONATION-LINK' | grep -q 'app/src/main/java/t/Src.kt:1' && ok "A link copied into app code reports the app source location" || bad "A link copied into app code reports the app source location"
+rm "$D/app/src/main/java/t/Src.kt"
+printf 'name: storage\nfunding: [https://github.com/sponsors/storage]\ncustom_url: https://ko-fi.com/storage\n' > "$D/patches/storage/pubspec.yaml"
+OUT="$(bash "$GUARD" "$D" 2>&1)"
+echo "$OUT" | grep -A1 'GOOGLE-PAYMENTS-DONATION-LINK' | grep -q 'patches/storage/pubspec.yaml:3' && ok "A URL outside the funding field retains its source line" || bad "A URL outside the funding field retains its source line"
 rm -rf "$D"
 
 # 28 Play billing with no refund-review handling surfaces the chargeback-liability finding
