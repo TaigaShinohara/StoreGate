@@ -101,6 +101,46 @@ class IntakeTests(unittest.TestCase):
         self.assertIsNone(self.intake()["saved_at"])
         self.assertEqual(self.fields(self.save({"app_access": "na", "test_plan": "na"})["intake"])["app_access"]["state"], "saved")
 
+    def test_workspace_region_default_only_applies_to_new_production_without_explicit_regions(self):
+        self.assertIsNone(self.call("defaults", regions=None)["defaults"]["regions"])
+        self.call("defaults", regions="worldwide")
+        self.assertEqual(self.call("defaults", regions=None)["defaults"]["regions"], "worldwide")
+        self.settings.pop("regions")
+        self.assertEqual(self.fields(self.register())["regions"]["value"], "JP")
+        self.settings["build"] = "109"
+        self.assertEqual(self.fields(self.register())["regions"]["value"], "全世界")
+        self.settings.update(platform="android", track="alpha")
+        self.register()
+        with database(self.folder) as db:
+            self.assertNotIn("region_scope", fetch(db, "releases", self.release_id))
+        self.settings.update(track="production", regions=["JP", "US"])
+        self.assertEqual(self.fields(self.register())["regions"]["value"], "JP, US")
+        self.call("defaults", regions="unset")
+        self.settings.update(build="110")
+        self.settings.pop("regions")
+        self.assertEqual(self.fields(self.register())["regions"]["state"], "missing")
+
+    def test_worldwide_plan_requires_concrete_store_regions_and_keeps_them_on_unrelated_edit(self):
+        result = self.save({"regions": "worldwide"})
+        self.assertEqual(self.fields(result["intake"])["regions"]["value"], "全世界")
+        conditions = next(row for row in result["resume"]["checks"] if row["name"] == "conditions")
+        self.assertEqual(conditions["state"], "pending")
+        self.assertIn("公式ストア", conditions["message"])
+        packet = self.call("approval-packet", action="submit", baseline=False)["approval_packet"]
+        rows = [row for section in packet["sections"] for row in section["rows"] if row["label"] == "予定地域"]
+        self.assertEqual(rows[0]["value"], "全世界（ストアの配信対象地域を照合待ち）")
+
+        self.settings.update(region_scope="worldwide", regions=["US", "JP"])
+        self.register()
+        result = self.save({"regions": "全世界", "ads": "no"})
+        conditions = next(row for row in result["resume"]["checks"] if row["name"] == "conditions")
+        self.assertEqual(conditions["state"], "pass")
+        with database(self.folder) as db:
+            self.assertEqual(fetch(db, "releases", self.release_id)["regions"], ["JP", "US"])
+        self.save({"regions": "JP"})
+        with database(self.folder) as db:
+            self.assertNotIn("region_scope", fetch(db, "releases", self.release_id))
+
     def test_capacity_and_missing_auth_only_flag_affected_work(self):
         self.save({"ipad": "none"})
         def free(path):
