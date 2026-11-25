@@ -83,14 +83,16 @@ def get_one(items, message):
     return items[0]
 
 
+REVIEW_CONTACT_ENV = {
+    "contactFirstName": "STOREGATE_REVIEW_CONTACT_FIRST_NAME",
+    "contactLastName": "STOREGATE_REVIEW_CONTACT_LAST_NAME",
+    "contactPhone": "STOREGATE_REVIEW_CONTACT_PHONE",
+    "contactEmail": "STOREGATE_REVIEW_CONTACT_EMAIL",
+}
+
+
 def review_contact_from_env():
-    fields = {
-        "contactFirstName": "STOREGATE_REVIEW_CONTACT_FIRST_NAME",
-        "contactLastName": "STOREGATE_REVIEW_CONTACT_LAST_NAME",
-        "contactPhone": "STOREGATE_REVIEW_CONTACT_PHONE",
-        "contactEmail": "STOREGATE_REVIEW_CONTACT_EMAIL",
-    }
-    contact = {field: os.environ.get(variable, "").strip() for field, variable in fields.items()}
+    contact = {field: os.environ.get(variable, "").strip() for field, variable in REVIEW_CONTACT_ENV.items()}
     if any(not value or not value.isprintable() or value.startswith("op://") for value in contact.values()):
         raise StoreError("審査連絡先4項目を認証ランナー経由で環境変数に渡してください。")
     if not re.fullmatch(r"\+[1-9][0-9]{1,14}", contact["contactPhone"]):

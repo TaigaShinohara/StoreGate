@@ -94,6 +94,30 @@ struct SharedDeliveryUIChecks {
         }
 
         try await click("release-\(ios)", in: window)
+        let unsaved = try cli(workspace, ["intake", ios])["intake"] as? [String: Any]
+        guard unsaved?["saved_at"] is NSNull else { throw Failure(description: "既存案件に開始時の案内がありません") }
+        try await click("intake-edit", in: window)
+        try await type("JPY 400", at: "intake-price", in: window, replacing: true)
+        try await click("intake-save", in: window)
+        try await waitForSheetToClose(window)
+        let saved = try cli(workspace, ["intake", ios])["intake"] as? [String: Any]
+        guard saved?["saved_at"] is String,
+              (saved?["fields"] as? [[String: Any]])?.contains(where: {
+                  $0["key"] as? String == "price" && $0["value"] as? String == "JPY 400"
+              }) == true else {
+            throw Failure(description: "GUIで保存した価格をCLIで読み戻せません")
+        }
+        try await click("intake-edit", in: window)
+        let price = try await anchor("intake-price")
+        guard price.window === window.attachedSheet else { throw Failure(description: "保存した確認リストを開けません") }
+        try await closeSheet(window)
+        try await click("preflight-open", in: window)
+        _ = try await anchor("preflight-content")
+        let preflight = try cli(workspace, ["preflight", ios])["preflight"] as? [String: Any]
+        guard (preflight?["checks"] as? [[String: Any]])?.contains(where: {
+            $0["name"] as? String == "authentication" && $0["outcome"] as? String == "reference_missing"
+        }) == true else { throw Failure(description: "認証参照の未設定を照合できません") }
+        try await closeSheet(window)
         try await click("approval-packet", in: window)
         _ = try await anchor("packet-content")
         try await click("packet-baseline", in: window)
@@ -132,16 +156,26 @@ struct SharedDeliveryUIChecks {
         try await Task.sleep(for: .milliseconds(600))
     }
 
-    private static func type(_ text: String, at id: String, in window: NSWindow) async throws {
+    private static func type(_ text: String, at id: String, in window: NSWindow, replacing: Bool = false) async throws {
         try await click(id, in: window)
         guard let field = window.attachedSheet?.firstResponder as? NSTextView else {
             throw Failure(description: "入力欄を開けません \(id)")
         }
+        if replacing { field.selectAll(nil) }
         field.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
     }
 
     private static func save(in window: NSWindow) async throws {
         try await click("test-save", in: window)
+        try await waitForSheetToClose(window)
+    }
+
+    private static func closeSheet(_ window: NSWindow) async throws {
+        try await click("release-sheet-close", in: window)
+        try await waitForSheetToClose(window)
+    }
+
+    private static func waitForSheetToClose(_ window: NSWindow) async throws {
         for _ in 0..<70 {
             if window.attachedSheet == nil { return }
             try await Task.sleep(for: .milliseconds(80))

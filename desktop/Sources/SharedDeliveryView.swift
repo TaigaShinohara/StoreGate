@@ -91,6 +91,8 @@ private struct SharedRelease: Decodable, Identifiable, Sendable {
     var testing: SharedTesting?
     var workflow: ReleaseHandoff?
     var readbacks: ReleaseReadbacks?
+    let intake: ReleaseIntake?
+    var start_checks: [SharedPreflight.Check]?
 
     var platformTitle: String {
         switch platform {
@@ -113,6 +115,8 @@ private struct SharedResponse: Decodable, Sendable {
     let checks: [SharedCheck]?
     let testing: SharedTesting?
     let preflight: SharedPreflight?
+    let environment: [SharedPreflight.Check]?
+    let intake: ReleaseIntake?
     let resume: Resumed?
     let approval_packet: ReleaseApprovalPacket?
     let test_workflow: [HandoffStep]?
@@ -125,6 +129,7 @@ private struct SharedResponse: Decodable, Sendable {
         let local_issue: String?
         let message: String?
         let progress: [Progress]?
+        let environment: [SharedPreflight.Check]?
         struct Progress: Decodable, Sendable {
             let message: String?
         }
@@ -138,9 +143,24 @@ private struct SharedPreflight: Decodable, Sendable {
         let title: String
         let state: String
         let message: String
+        let outcome: String?
+        let observed_at: String?
 
         var status: String {
-            switch state {
+            switch outcome {
+            case "reference_present", "credential_present": return "設定あり"
+            case "reference_missing": return "参照未設定"
+            case "credential_unavailable": return "実行環境に未設定"
+            case "sign_in_required": return "認証の更新が必要"
+            case "none": return "端末なし"
+            case "disconnected": return "未接続"
+            case "unreadable": return "読み取り不可"
+            case "simulator": return "シミュレータのみ"
+            case "available": return "実機あり"
+            case "na": return "該当なし"
+            default: break
+            }
+            return switch state {
             case "pass": "確認済み"
             case "blocked": "要対応"
             case "stale": "再確認"
@@ -179,11 +199,19 @@ struct SharedDeliveryView: View {
     @State private var deviceRead: DeviceRead?
     @State private var deviceAlias = ""
     @State private var deviceIdentifier = ""
+    @State private var editingIntake: IntakePresentation?
+    @State private var intakeError: String?
     @State private var packetID: String?
     @State private var packetAction = "submit"
     @State private var packetReport: ReleaseApprovalPacket?
     @State private var packetError: String?
     @State private var showPacket = false
+
+    private struct IntakePresentation: Identifiable {
+        var id: String { intake.id }
+        let intake: ReleaseIntake
+        let scope: String
+    }
 
     private struct DeviceRead: Identifiable {
         let id: String
@@ -305,6 +333,13 @@ struct SharedDeliveryView: View {
             .padding(22)
             .frame(width: 460)
         }
+        .sheet(item: $editingIntake) { item in
+            ReleaseIntakePane(intake: item.intake, scope: item.scope, busy: busy, error: intakeError,
+                              close: { editingIntake = nil }) { answers in
+                guard let data = try? JSONEncoder().encode(answers) else { return }
+                perform(["intake", item.id, "--revision", item.intake.revision, "--answers-json", String(decoding: data, as: UTF8.self)])
+            }
+        }
         .sheet(isPresented: $showPreflight) {
             VStack(alignment: .leading, spacing: 14) {
                 Text("配信前の事前確認").font(.title2.bold())
@@ -317,11 +352,13 @@ struct SharedDeliveryView: View {
                                 VStack(alignment: .leading, spacing: 4) {
                                     LabeledContent(check.title, value: check.status).font(.headline)
                                     Text(check.message).textSelection(.enabled)
+                                    if let date = check.observed_at { Text("照会日時 \(date)").font(.caption).foregroundStyle(.secondary) }
                                 }
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .storeGateCheckID("preflight-content")
                 }
                 if busy { ProgressView().controlSize(.small).accessibilityLabel("事前確認中") }
                 if let error = preflightError { Text(error).foregroundStyle(.red) }
@@ -333,6 +370,7 @@ struct SharedDeliveryView: View {
                     }
                     Spacer()
                     Button("閉じる") { showPreflight = false }.keyboardShortcut(.cancelAction)
+                        .storeGateCheckID("release-sheet-close")
                 }
             }
             .padding(22)
@@ -398,6 +436,18 @@ struct SharedDeliveryView: View {
         Text(release.app).font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
         Text("\(release.platformTitle)　\(release.version)（ビルド \(release.build)）")
             .foregroundStyle(.secondary)
+        if let intake = release.intake {
+            HStack {
+                Button(intake.saved_at == nil ? "開始時の確認リストを記入…" : "開始時の回答を表示・編集…") {
+                    openIntake(intake, release: release)
+                }
+                .disabled(busy)
+                .storeGateCheckID("intake-edit")
+                if intake.needsReview {
+                    Text("登録設定の変更あり").font(.callout).foregroundStyle(.secondary)
+                }
+            }
+        }
         if let workflow = release.workflow, let phase = selectedPhase ?? workflow.default_phase {
             if workflow.phases.count > 1 {
                 Picker("工程", selection: Binding(get: { phase }, set: { selectedPhase = $0 })) {
@@ -406,7 +456,10 @@ struct SharedDeliveryView: View {
                 }
                 .pickerStyle(.segmented)
             }
-            ResumePane(steps: workflow.phases[phase] ?? [], history: release.readbacks?.history ?? [])
+            ResumePane(steps: workflow.phases[phase] ?? [], history: release.readbacks?.history ?? []) { arguments in
+                perform(arguments)
+            }
+            .disabled(busy)
             HStack {
                 Button("未確認の監査を進める") { perform(["resume", release.id, "--phase", phase, "--prepare"]) }
                     .disabled(workflow.pending_audits.isEmpty)
@@ -430,6 +483,7 @@ struct SharedDeliveryView: View {
                 showPreflight = true
                 perform(["preflight", release.id])
             }
+            .storeGateCheckID("preflight-open")
             if release.track == "production" {
                 Button("本番の確認票…") {
                     packetID = release.id
@@ -442,6 +496,17 @@ struct SharedDeliveryView: View {
             }
         }
         .disabled(busy)
+        let earlyChecks = (release.start_checks ?? []).filter {
+            $0.state == "blocked" || $0.state == "not_checked" ||
+                ($0.name == "authentication" && $0.outcome != "credential_present")
+        }
+        if !earlyChecks.isEmpty {
+            DisclosureGroup("事前確認で対応する項目 \(earlyChecks.count)件") {
+                ForEach(earlyChecks) { check in
+                    LabeledContent(check.title, value: check.status).padding(.vertical, 3)
+                }
+            }
+        }
         if let testing = release.testing {
             TestingPane(testing: testing, releaseID: release.id, app: release.app, version: release.version,
                         build: release.build, busy: busy, save: perform)
@@ -555,6 +620,8 @@ struct SharedDeliveryView: View {
         message = nil
         let checkingPreflight = arguments[0] == "preflight"
         let checkingPacket = arguments[0] == "approval-packet"
+        let savingIntake = arguments[0] == "intake"
+        if savingIntake { intakeError = nil }
         if checkingPreflight { preflightError = nil }
         if checkingPacket { packetError = nil }
         let script = Bundle.main.resourceURL?
@@ -565,6 +632,10 @@ struct SharedDeliveryView: View {
             do {
                 let first = try await Task.detached { try Self.call(script, folder, arguments) }.value
                 let decoded = try JSONDecoder().decode(SharedResponse.self, from: first)
+                if savingIntake, let error = decoded.error {
+                    intakeError = error
+                    return
+                }
                 if checkingPreflight {
                     preflightError = decoded.error
                     if let result = decoded.preflight { preflightReport = result }
@@ -582,6 +653,7 @@ struct SharedDeliveryView: View {
                         releases[index].workflow = result.workflow
                         releases[index].readbacks = result.readbacks
                         releases[index].checks = result.checks
+                        releases[index].start_checks = result.environment
                     }
                     return
                 }
@@ -625,12 +697,27 @@ struct SharedDeliveryView: View {
                 }
                 releases = list.releases ?? []
                 legacy = list.legacy ?? []
-                if selectedID == nil || !releases.contains(where: { $0.id == selectedID }) {
+                if arguments[0] == "release", let intake = decoded.intake {
+                    selectedID = intake.id
+                    if let index = releases.firstIndex(where: { $0.id == intake.id }) {
+                        releases[index].start_checks = decoded.environment
+                    }
+                    if intake.saved_at == nil || intake.needsReview,
+                       let release = releases.first(where: { $0.id == intake.id }) {
+                        openIntake(intake, release: release)
+                    }
+                } else if selectedID == nil || !releases.contains(where: { $0.id == selectedID }) {
                     selectedID = releases.first?.id
+                }
+                if savingIntake {
+                    message = decoded.resume?.local_issue ?? decoded.resume?.progress?.compactMap(\.message).first
+                    editingIntake = nil
                 }
             } catch {
                 let error = "配信エンジンを読み込めませんでした。Python 3と保存先を確認してください。"
-                if checkingPreflight {
+                if savingIntake {
+                    intakeError = error
+                } else if checkingPreflight {
                     preflightError = error
                 } else if checkingPacket {
                     packetError = error
@@ -641,6 +728,13 @@ struct SharedDeliveryView: View {
                 }
             }
         }
+    }
+
+    private func openIntake(_ intake: ReleaseIntake, release: SharedRelease) {
+        intakeError = nil
+        let target = release.platform == "ios" ? "App Store Connect · TestFlight／本番" : release.platformTitle
+        editingIntake = IntakePresentation(intake: intake,
+            scope: "\(release.app) · \(target) · \(release.version)（ビルド \(release.build)）")
     }
 
     private func loadPacket(baseline: Bool = false) {
