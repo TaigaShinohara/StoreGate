@@ -679,6 +679,27 @@ hit_file() {
   printf '%s%s' "${f#"${DIR%/}"/}" "${n:+:$n}"
 }
 
+# Pub shows a package's funding list on its package page. Keep other matching
+# lines in that file and preserve the original line numbers for diagnostics.
+donation_link_location() {
+  local file match
+  while IFS= read -r file; do
+    case "$file" in
+      */pubspec.yaml)
+        match="$(awk '
+          /^[^[:space:]#]/ && !/^-[[:space:]]/ { funding = /^funding[[:blank:]]*:/ }
+          { print funding ? "" : $0 }
+        ' "$file" 2>/dev/null | grep -En -m1 -e "$1")" ;;
+      *)
+        match="$(grep -En -m1 -e "$1" "$file" 2>/dev/null)" ;;
+    esac
+    if [ -n "$match" ]; then
+      printf '%s:%s' "${file#"${DIR%/}"/}" "${match%%:*}"
+      return
+    fi
+  done < <(tr '\n' '\0' < "$FILELIST" | xargs -0 grep -EIls -e "$1" 2>/dev/null)
+}
+
 # Findings are held and printed by flush_findings, critical first (issue #842).
 F_CRIT=(); F_HIGH=(); F_MED=(); FOUND_IDS=""; POOL_PASS=0
 finding() {  # severity id title fix [src|manifest|config regex]. The optional pair names the file that triggered it.
@@ -1266,8 +1287,12 @@ if [ "$IS_AND" -eq 1 ]; then
   fi
   # Payments policy exception is literal. only a tax-exempt charity may take donations outside Play
   # billing (AnkiDroid, August 2026). A donate link to a funding platform is a Payments violation.
-  if grep_has 'opencollective\.com|ko-fi\.com|patreon\.com|buymeacoffee\.com|github\.com/sponsors|liberapay\.com|paypal\.com/donate'; then
-    finding high "GOOGLE-PAYMENTS-DONATION-LINK" "In-app donation link to a payment page outside Play billing" "Remove the donation entry point from the Play build or sell it through Play billing. Only a tax-exempt charity (501(c)(3)-class) may bypass Play billing, Google rejects 501(c)(6) and unincorporated projects (Payments policy)." src 'opencollective\.com|ko-fi\.com|patreon\.com|buymeacoffee\.com|github\.com/sponsors|liberapay\.com|paypal\.com/donate'
+  DONATION_RE='opencollective\.com|ko-fi\.com|patreon\.com|buymeacoffee\.com|github\.com/sponsors|liberapay\.com|paypal\.com/donate'
+  if grep_has "$DONATION_RE"; then
+    DONATION_LOCATION="$(donation_link_location "$DONATION_RE")"
+    if [ -n "$DONATION_LOCATION" ]; then
+      finding high "GOOGLE-PAYMENTS-DONATION-LINK" "In-app donation link to a payment page outside Play billing" "Remove the donation entry point from the Play build or sell it through Play billing. Only a tax-exempt charity (501(c)(3)-class) may bypass Play billing, Google rejects 501(c)(6) and unincorporated projects (Payments policy)." path "$DONATION_LOCATION"
+    fi
   fi
   # Since 3 August 2026 the developer bears chargeback costs. An app on Play billing that never
   # handles the refund-review notification loses every fraudulent dispute by default.
