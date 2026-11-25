@@ -32,16 +32,18 @@ struct ReleaseIntake: Decodable, Identifiable, Sendable {
 struct ReleaseIntakePane: View {
     let intake: ReleaseIntake
     let scope: String
+    let platform: String
     let busy: Bool
     let error: String?
     let close: () -> Void
     let save: ([String: String]) -> Void
     @State private var answers: [String: String]
 
-    init(intake: ReleaseIntake, scope: String, busy: Bool, error: String?, close: @escaping () -> Void,
+    init(intake: ReleaseIntake, scope: String, platform: String, busy: Bool, error: String?, close: @escaping () -> Void,
          save: @escaping ([String: String]) -> Void) {
         self.intake = intake
         self.scope = scope
+        self.platform = platform
         self.busy = busy
         self.error = error
         self.close = close
@@ -53,6 +55,10 @@ struct ReleaseIntakePane: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("開始時の確認リスト").font(.title2.bold())
             Text(scope).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("今回の対応プラットフォームは合っていますか？").font(.headline)
+                Text(platform).storeGateCheckID("intake-platform")
+            }
             Text("分かる範囲を保存できます。送信・配信開始・公開は、対象の操作ごとに承認します。")
                 .font(.callout).foregroundStyle(.secondary)
             ScrollView {
