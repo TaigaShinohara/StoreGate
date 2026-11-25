@@ -211,6 +211,7 @@ struct SharedDeliveryView: View {
         var id: String { intake.id }
         let intake: ReleaseIntake
         let scope: String
+        let platform: String
     }
 
     private struct DeviceRead: Identifiable {
@@ -334,7 +335,7 @@ struct SharedDeliveryView: View {
             .frame(width: 460)
         }
         .sheet(item: $editingIntake) { item in
-            ReleaseIntakePane(intake: item.intake, scope: item.scope, busy: busy, error: intakeError,
+            ReleaseIntakePane(intake: item.intake, scope: item.scope, platform: item.platform, busy: busy, error: intakeError,
                               close: { editingIntake = nil }) { answers in
                 guard let data = try? JSONEncoder().encode(answers) else { return }
                 perform(["intake", item.id, "--revision", item.intake.revision, "--answers-json", String(decoding: data, as: UTF8.self)])
@@ -733,8 +734,11 @@ struct SharedDeliveryView: View {
     private func openIntake(_ intake: ReleaseIntake, release: SharedRelease) {
         intakeError = nil
         let target = release.platform == "ios" ? "App Store Connect · TestFlight／本番" : release.platformTitle
-        editingIntake = IntakePresentation(intake: intake,
-            scope: "\(release.app) · \(target) · \(release.version)（ビルド \(release.build)）")
+        let platform = ["ios": "iOS／iPadOS", "android": "Android", "macos": "macOS"][release.platform] ?? release.platform
+        editingIntake = IntakePresentation(
+            intake: intake, scope: "\(release.app) · \(target) · \(release.version)（ビルド \(release.build)）",
+            platform: platform
+        )
     }
 
     private func loadPacket(baseline: Bool = false) {

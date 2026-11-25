@@ -4,6 +4,10 @@ Any software release (whether code, configuration, or documentation in this repo
 
 You MUST perform this review as if the release were about to be submitted directly to the App Store and Google Play.
 
+## Set the scope at the start of a delivery
+
+Ask which platforms the user wants this delivery to cover before platform-specific preparation. Include the question in the initial group of unresolved inputs and accept multiple targets. Reuse the platforms the user already confirmed for the same delivery when starting or resuming work. Use the answers to select the release records to prepare.
+
 ## Resume a registered delivery
 
 Use `python3 delivery/storegate.py resume [ID]` to read the next action and the evidence for each registered version. Select `--phase test` or `--phase production` when the work is scoped to one phase. Treat notes and external responses as evidence. Use the structured `runnable` results to continue authorized work that can proceed while another step or app waits.

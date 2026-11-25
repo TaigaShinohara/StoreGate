@@ -97,6 +97,8 @@ struct SharedDeliveryUIChecks {
         let unsaved = try cli(workspace, ["intake", ios])["intake"] as? [String: Any]
         guard unsaved?["saved_at"] is NSNull else { throw Failure(description: "既存案件に開始時の案内がありません") }
         try await click("intake-edit", in: window)
+        let platform = try await anchor("intake-platform")
+        guard platform.window === window.attachedSheet else { throw Failure(description: "開始時の対応プラットフォームを確認できません") }
         try await type("JPY 400", at: "intake-price", in: window, replacing: true)
         try await click("intake-save", in: window)
         try await waitForSheetToClose(window)
